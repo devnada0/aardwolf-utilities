@@ -13,7 +13,7 @@
 
 *   **Auto-Stand:** Automatically sends `stand` before moving if you are Sleeping or Resting.
 *   **Intelligent Retreat:** Detects if you are in combat.
-    *   Checks your **Class History** (Multiclass) against `retreat` skill requirements.
+    *   Checks your **Class** against `retreat` skill requirements.
     *   Calculates eligibility based on `Level + (Tier * 10)`.
     *   Executes `retreat <dir>` if eligible; otherwise attempts a standard move.
 *   **Zero Spam:** Runs silently in the background unless `debug` mode is active.
