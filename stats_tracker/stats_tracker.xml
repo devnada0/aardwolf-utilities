@@ -1,0 +1,653 @@
+<?xml version="1.0" encoding="iso-8859-1"?>
+<!DOCTYPE muclient>
+<muclient>
+<plugin
+   name="Stat_Tracker"
+   author="Morienda"
+   id="b5b5b5b5b5b5b5b5b5b5b5b5"
+   language="Lua"
+   purpose="Tracks QP, TP, XP, Gold, Sales, Trains, Pracs, Bloot + XP Monitor"
+   save_state="y"
+   date_written="2025-12-09 23:45:00"
+   requires="4.73"
+   version="5.6"
+   >
+<description trim="y">
+HYBRID TRACKER v5.6
+Tracks stats via GMCP and Text. Includes Compact XP Widget.
+
+COMMANDS:
+  statt              : Show help.
+  statt report       : View current stats table.
+  statt report chat  : View compact summary (Local).
+  statt xpmeter      : Toggle the XP Monitor widget.
+  statt xpmeter reset: Reset window position.
+  statt reset        : Reset counters.
+</description>
+
+</plugin>
+
+<!-- Triggers -->
+<triggers>
+  <trigger match="CONGRATULATIONS! You have completed your campaign\." enabled="y" regexp="y" script="OnCampaignComplete" sequence="100"></trigger>
+  <trigger match="^You sell .+ to .+ for ([\d,]+) gold\.$" enabled="y" regexp="y" script="OnGoldSale" sequence="100"></trigger>
+  <trigger match="^You get \(+(?<tier>[A-Za-z]+)\)+ .+ from the .*corpse of .+\.$" enabled="y" regexp="y" script="OnBlootLoot" sequence="100"></trigger>
+  <trigger match="^You have now joined Global Quest # \d+\." enabled="y" regexp="y" script="OnGQJoin" sequence="100"></trigger>
+  <trigger match="^You were the first to complete this quest!$" enabled="y" regexp="y" script="OnGQWin" sequence="100"></trigger>
+  <trigger match="^You have finished this global quest\.$" enabled="y" regexp="y" script="OnGQFinish" sequence="100"></trigger>
+</triggers>
+
+<!-- Timers -->
+<timers>
+  <timer name="XP_Monitor_Tick" enabled="n" second="1.00" script="OnXPTick"></timer>
+</timers>
+
+<!-- Aliases -->
+<aliases>
+  <alias match="^statt report(.*)$" enabled="y" regexp="y" script="ReportStats" sequence="100"></alias>
+  <alias match="statt reset" enabled="y" script="ResetStats" sequence="100"></alias>
+  <alias match="^statt(?: help|\?)?$" enabled="y" regexp="y" script="ShowHelp" sequence="100"></alias>
+  <alias match="^statt xpmeter$" enabled="y" regexp="y" script="ToggleXPMonitor" sequence="100"></alias>
+  <alias match="^statt xpmeter reset$" enabled="y" regexp="y" script="ResetWindow" sequence="100"></alias>
+</aliases>
+
+<!-- Script -->
+<script>
+<![CDATA[
+require "gmcphelper"
+require "serialize"
+require "movewindow"
+require "bit"
+local theme_loaded, _ = pcall(require, "mw_theme_base")
+
+-- -----------------------------------------------------------------------------
+-- CONFIG
+-- -----------------------------------------------------------------------------
+local BLOOT_TIERS = {
+   "Polished", "Enhanced", "Burnished", "Shiny", "Vibrant", "Sparkling", "Gleaming", 
+   "Shimmering", "Dazzling", "Brilliant", "Radiant", "Wondrous", "Majestic", "Exalted", 
+   "Eternal", "Legendary", "Epic", "Fabled", "Mythical", "Divine", "Godly"
+}
+
+local per_level = 1000
+local win = "win_xp_monitor_" .. GetPluginID()
+local font = "font_" .. GetPluginID()
+
+-- -----------------------------------------------------------------------------
+-- STATE
+-- -----------------------------------------------------------------------------
+local stats = {
+   xp_earned = 0, qp_earned = 0, tp_earned = 0,
+   gold_earned = 0, gold_sales = 0, trains_earned = 0, pracs_earned = 0,
+   levels_gained = 0, campaigns = 0, quests = 0,
+   gq_joined = 0, gq_won = 0, gq_completed = 0,
+   bloot = {}, 
+   start_time = os.time(), total_online_seconds = 0,
+   monitor_active = false 
+}
+
+local current_session_start = 0
+local last = { tnl = -1, level = -1, qp = -1, tp = -1, trains = -1, pracs = -1, net_worth = -1 }
+local xp_history = {} 
+local xp_this_tick = 0
+local history_size = 900 -- 15 minutes
+local monitor_uptime = 0 -- Tracks how long monitor has been running for color logic
+
+-- Drag State
+local drag_start_x, drag_start_y = 0, 0
+
+-- -----------------------------------------------------------------------------
+-- HELPERS
+-- -----------------------------------------------------------------------------
+function split(str, pat)
+   local t = {}
+   local fpat = "(.-)" .. pat
+   local last_end = 1
+   local s, e, cap = str:find(fpat, 1)
+   while s do
+      if s ~= 1 or cap ~= "" then table.insert(t, cap) end
+      last_end = e+1
+      s, e, cap = str:find(fpat, last_end)
+   end
+   if last_end <= #str then
+      cap = str:sub(last_end)
+      table.insert(t, cap)
+   end
+   return t
+end
+
+function ValidateStats()
+   stats.xp_earned = stats.xp_earned or 0
+   stats.qp_earned = stats.qp_earned or 0
+   stats.tp_earned = stats.tp_earned or 0
+   stats.gold_earned = stats.gold_earned or 0
+   stats.gold_sales = stats.gold_sales or 0
+   stats.trains_earned = stats.trains_earned or 0
+   stats.pracs_earned = stats.pracs_earned or 0
+   stats.levels_gained = stats.levels_gained or 0
+   stats.campaigns = stats.campaigns or 0
+   stats.quests = stats.quests or 0
+   stats.gq_joined = stats.gq_joined or 0
+   stats.gq_won = stats.gq_won or 0
+   stats.gq_completed = stats.gq_completed or 0
+   stats.bloot = stats.bloot or {}
+   stats.total_online_seconds = stats.total_online_seconds or 0
+   stats.start_time = stats.start_time or os.time()
+   if stats.monitor_active == nil then stats.monitor_active = false end
+end
+
+-- -----------------------------------------------------------------------------
+-- TIME TRACKING
+-- -----------------------------------------------------------------------------
+function GetPlayTime()
+   local total = stats.total_online_seconds or 0
+   if IsConnected() and current_session_start > 0 then
+      total = total + (os.time() - current_session_start)
+   end
+   return total
+end
+
+function GetRealTime() return os.time() - (stats.start_time or os.time()) end
+function OnPluginConnect() current_session_start = os.time() end
+function OnPluginDisconnect()
+   if current_session_start > 0 then
+      stats.total_online_seconds = (stats.total_online_seconds or 0) + (os.time() - current_session_start)
+      current_session_start = 0
+   end
+   OnPluginSaveState()
+end
+function OnPluginClose() OnPluginDisconnect() end
+
+-- -----------------------------------------------------------------------------
+-- XP MONITOR (WIDGET)
+-- -----------------------------------------------------------------------------
+function GetThemeColor(key, default_name)
+   if theme_loaded and Theme and Theme[key] then return Theme[key] end
+   return ColourNameToRGB(default_name)
+end
+
+function InitWindow()
+   local bg = GetThemeColor("PRIMARY_BODY", "black")
+   
+   -- 1. Install Movewindow FIRST to get saved position
+   local win_info = movewindow.install(win, miniwin.pos_top_right, miniwin.create_absolute_location, true)
+   
+   -- 2. Create Window using saved coordinates
+   WindowCreate(win, win_info.window_left, win_info.window_top, 0, 0, win_info.window_mode, win_info.window_flags, bg)
+   
+   -- Use Verdana Bold for better readability
+   WindowFont(win, font, "Verdana", 10, true, false, false, false, 0)
+   
+   if IsPluginInstalled("462b665ecb569efbf261422f") then
+      CallPlugin("462b665ecb569efbf261422f", "registerMiniwindow", win)
+   end
+
+   for i = 1, history_size do xp_history[i] = 0 end
+   
+   -- Hotspot covers the whole window
+   WindowAddHotspot(win, "body", 0, 0, 0, 0, "", "", "OnMouseDown", "", "OnMouseUp", "Drag to move / Right-click for menu", 1, 0)
+   WindowDragHandler(win, "body", "OnDragMove", "OnDragRelease", 0)
+
+   if stats.monitor_active then
+      WindowShow(win, true)
+      EnableTimer("XP_Monitor_Tick", true)
+      DrawWindow()
+   else
+      WindowShow(win, false)
+      EnableTimer("XP_Monitor_Tick", false)
+   end
+end
+
+function OnMouseDown(flags, id)
+   drag_start_x = WindowInfo(win, 14) or 0
+   drag_start_y = WindowInfo(win, 15) or 0
+end
+
+function OnDragMove(flags, id)
+   local mouse_x = WindowInfo(win, 14)
+   local mouse_y = WindowInfo(win, 15)
+   local win_x = WindowInfo(win, 10)
+   local win_y = WindowInfo(win, 11)
+   
+   if not mouse_x or not win_x then return end
+   
+   local dx = mouse_x - drag_start_x
+   local dy = mouse_y - drag_start_y
+   
+   if (dx ~= 0 or dy ~= 0) then
+      WindowPosition(win, win_x + dx, win_y + dy, 0, 2)
+   end
+end
+
+function OnDragRelease(flags, id) movewindow.save_state(win) end
+
+function OnMouseUp(flags, id)
+   -- Check for Right Click
+   if bit.band(flags, miniwin.hotspot_got_rh_mouse) ~= 0 then
+      RightClickMenu()
+   end
+end
+
+function RightClickMenu()
+   local menu = "Report Stats|Reset Session|-|Reset Window Position|Hide Monitor"
+   local result = WindowMenu(win, WindowInfo(win, 14), WindowInfo(win, 15), menu)
+   
+   if result == "Report Stats" then
+      ReportStats("statt report", "", {})
+   elseif result == "Reset Session" then
+      ResetStats()
+   elseif result == "Reset Window Position" then
+      ResetWindow()
+   elseif result == "Hide Monitor" then
+      ToggleXPMonitor()
+   end
+end
+
+function ToggleXPMonitor(name, line, wildcards)
+   stats.monitor_active = not stats.monitor_active
+   
+   if stats.monitor_active then
+      xp_history = {} 
+      for i = 1, history_size do xp_history[i] = 0 end
+      xp_this_tick = 0
+      monitor_uptime = 0 -- Reset uptime counter
+      WindowShow(win, true)
+      EnableTimer("XP_Monitor_Tick", true)
+      DrawWindow()
+      ColourNote("gold", "", "XP Monitor: ", "lime", "", "ENABLED")
+   else
+      WindowShow(win, false)
+      EnableTimer("XP_Monitor_Tick", false)
+      ColourNote("gold", "", "XP Monitor: ", "red", "", "DISABLED")
+   end
+   OnPluginSaveState()
+end
+
+function OnXPTick(name)
+   if not stats.monitor_active then return end
+   table.insert(xp_history, 1, xp_this_tick)
+   table.remove(xp_history) 
+   xp_this_tick = 0 
+   monitor_uptime = monitor_uptime + 1
+   DrawWindow()
+end
+
+function CalculateRate(seconds)
+   local sum = 0
+   for i = 1, seconds do sum = sum + (xp_history[i] or 0) end
+   return math.floor((sum / seconds) * 3600)
+end
+
+function DrawWindow()
+   local line_h = WindowFontInfo(win, font, 1)
+   if not line_h or line_h < 5 then line_h = 14 end
+   
+   -- Compact Widget Dimensions (Increased for 3 columns)
+   local width = 170 
+   local height = line_h + 6 -- Padding top/bottom
+   
+   local bg = GetThemeColor("PRIMARY_BODY", "black")
+   local border = GetThemeColor("BORDER", "gray")
+   
+   -- Colors
+   local col_red = ColourNameToRGB("red")
+   local col_green = ColourNameToRGB("lime")
+   local col_sep = ColourNameToRGB("dimgray")
+   
+   WindowResize(win, width, height, bg)
+   WindowRectOp(win, 2, 0, 0, 0, 0, bg)
+   
+   -- Calculate Text
+   local r60 = short_value(CalculateRate(60))   -- 1 min
+   local r300 = short_value(CalculateRate(300)) -- 5 min
+   local r900 = short_value(CalculateRate(900)) -- 15 min
+   local sep = " | "
+   
+   -- Determine Colors based on uptime
+   local col_1m = (monitor_uptime >= 60) and col_green or col_red
+   local col_5m = (monitor_uptime >= 300) and col_green or col_red
+   local col_15m = (monitor_uptime >= 900) and col_green or col_red
+   
+   local w1 = WindowTextWidth(win, font, r60)
+   local wSep = WindowTextWidth(win, font, sep)
+   local w2 = WindowTextWidth(win, font, r300)
+   local w3 = WindowTextWidth(win, font, r900)
+   
+   local total_text_w = w1 + wSep + w2 + wSep + w3
+   local start_x = (width - total_text_w) / 2
+   local y = 3 -- Vertical padding
+   
+   -- Draw 1m Rate
+   WindowText(win, font, r60, start_x, y, 0, 0, col_1m)
+   
+   -- Draw Separator 1
+   WindowText(win, font, sep, start_x + w1, y, 0, 0, col_sep)
+   
+   -- Draw 5m Rate
+   WindowText(win, font, r300, start_x + w1 + wSep, y, 0, 0, col_5m)
+   
+   -- Draw Separator 2
+   WindowText(win, font, sep, start_x + w1 + wSep + w2, y, 0, 0, col_sep)
+   
+   -- Draw 15m Rate
+   WindowText(win, font, r900, start_x + w1 + wSep + w2 + wSep, y, 0, 0, col_15m)
+   
+   -- Draw Border
+   if theme_loaded and Theme and Theme.DrawBorder then Theme.DrawBorder(win)
+   else WindowRectOp(win, 1, 0, 0, 0, 0, border) end
+   
+   -- Update Hotspot to cover new size
+   WindowMoveHotspot(win, "body", 0, 0, width, height)
+   
+   if IsPluginInstalled("462b665ecb569efbf261422f") then
+      CallPlugin("462b665ecb569efbf261422f", "boostMe", win)
+   end
+   CallPlugin("abc1a0944ae4af7586ce88dc", "BufferedRepaint")
+end
+
+function ResetWindow()
+   WindowPosition(win, 100, 100, 0, 18)
+   movewindow.save_state(win)
+   stats.monitor_active = true
+   WindowShow(win, true)
+   EnableTimer("XP_Monitor_Tick", true)
+   DrawWindow()
+   ColourNote("gold", "", "XP Monitor widget reset.")
+   OnPluginSaveState()
+end
+
+-- -----------------------------------------------------------------------------
+-- REPORTING UTILS
+-- -----------------------------------------------------------------------------
+local aard_colors = {
+   ['r'] = "red", ['R'] = "red", ['g'] = "lime", ['G'] = "lime",
+   ['y'] = "yellow", ['Y'] = "yellow", ['b'] = "blue", ['B'] = "blue",
+   ['m'] = "magenta", ['M'] = "magenta", ['c'] = "cyan", ['C'] = "cyan",
+   ['w'] = "silver", ['W'] = "white", ['D'] = "dimgray", ['x'] = "silver"
+}
+
+function PrintColoredString(str)
+   local parts = split(str, "@")
+   if not parts then return end
+   for i, part in ipairs(parts) do
+      if i == 1 and part ~= "" then ColourTell("silver", "", part)
+      elseif part ~= "" then
+         local code = string.sub(part, 1, 1)
+         local text = string.sub(part, 2)
+         local color = aard_colors[code] or "silver"
+         ColourTell(color, "", text)
+      end
+   end
+   Note("") 
+end
+
+-- -----------------------------------------------------------------------------
+-- LIFECYCLE & LOGIC
+-- -----------------------------------------------------------------------------
+function OnPluginInstall()
+   local saved = GetVariable("session_stats")
+   if saved then
+      local f = loadstring("return " .. saved)
+      if f then stats = f() end
+   end
+   ValidateStats()
+   
+   if IsConnected() then current_session_start = os.time() end
+   InitWindow()
+   SendNoEcho("protocol gmcp sendchar")
+   ColourNote("cornflowerblue", "", "Stat Tracker v5.6 loaded. Type ", "white", "", "statt help", "cornflowerblue", "", ".")
+end
+
+function OnPluginSaveState()
+   SetVariable("session_stats", serialize.save_simple(stats))
+   movewindow.save_state(win)
+end
+
+function OnCampaignComplete(name, line, wildcards) stats.campaigns = stats.campaigns + 1; OnPluginSaveState() end
+function OnGoldSale(name, line, wildcards)
+   local amount = string.gsub(wildcards[1], ",", "")
+   stats.gold_sales = stats.gold_sales + tonumber(amount)
+   OnPluginSaveState()
+end
+function OnBlootLoot(name, line, wildcards)
+   local tier = wildcards.tier
+   stats.bloot[tier] = (stats.bloot[tier] or 0) + 1
+   OnPluginSaveState()
+end
+function OnGQJoin(name, line, wildcards) stats.gq_joined = stats.gq_joined + 1; OnPluginSaveState() end
+function OnGQWin(name, line, wildcards) stats.gq_won = stats.gq_won + 1; stats.gq_completed = stats.gq_completed + 1; OnPluginSaveState() end
+function OnGQFinish(name, line, wildcards) stats.gq_completed = stats.gq_completed + 1; OnPluginSaveState() end
+
+function OnPluginBroadcast(msg, id, name, text)
+   if (id == "3e7dedbe37e44942dd46d264") then
+      if (text == "char.status") then HandleStatus(gmcp("char.status"))
+      elseif (text == "char.worth") then HandleWorth(gmcp("char.worth"))
+      elseif (text == "comm.quest") then HandleQuest(gmcp("comm.quest"))
+      elseif (text == "char.base") then
+         local base = gmcp("char.base")
+         if base.perlevel then per_level = tonumber(base.perlevel) end
+      end
+   end
+end
+
+function HandleStatus(data)
+   local curr_tnl = tonumber(data.tnl) or last.tnl
+   local curr_level = tonumber(data.level) or last.level
+   if curr_tnl == -1 or curr_level == -1 then 
+      if tonumber(data.tnl) then last.tnl = tonumber(data.tnl) end
+      if tonumber(data.level) then last.level = tonumber(data.level) end
+      return 
+   end
+   if last.tnl == -1 then last.tnl = curr_tnl; last.level = curr_level; return end
+   if curr_tnl == last.tnl and curr_level == last.level then return end
+
+   local delta = 0
+   if curr_level > last.level then
+      delta = last.tnl + (per_level - curr_tnl)
+      local lvl_diff = curr_level - last.level
+      if lvl_diff > 0 then stats.levels_gained = stats.levels_gained + lvl_diff end
+   elseif curr_level == last.level then
+      delta = last.tnl - curr_tnl
+   end
+
+   if delta > 0 then 
+      stats.xp_earned = stats.xp_earned + delta 
+      if stats.monitor_active then xp_this_tick = xp_this_tick + delta end
+   end
+   last.tnl = curr_tnl; last.level = curr_level
+end
+
+function HandleWorth(data)
+   local curr_gold = tonumber(data.gold); local curr_bank = tonumber(data.bank)
+   if not curr_gold or not curr_bank then return end
+   local curr_net_worth = curr_gold + curr_bank
+   local curr_qp = tonumber(data.qp) or last.qp
+   local curr_tp = tonumber(data.tp) or last.tp
+   local curr_trains = tonumber(data.trains) or last.trains
+   local curr_pracs = tonumber(data.pracs) or last.pracs
+
+   if last.net_worth == -1 then
+      last.net_worth = curr_net_worth; last.qp = curr_qp; last.tp = curr_tp; 
+      last.trains = curr_trains; last.pracs = curr_pracs; return
+   end
+
+   local gold_delta = curr_net_worth - last.net_worth
+   if gold_delta > 0 then stats.gold_earned = stats.gold_earned + gold_delta end
+   if curr_qp ~= -1 then
+      local qp_delta = curr_qp - last.qp
+      if qp_delta > 0 then stats.qp_earned = stats.qp_earned + qp_delta end
+      last.qp = curr_qp
+   end
+   if curr_tp ~= -1 then
+      local tp_delta = curr_tp - last.tp
+      if tp_delta > 0 then stats.tp_earned = stats.tp_earned + tp_delta end
+      last.tp = curr_tp
+   end
+   if curr_trains ~= -1 then
+      local tr_delta = curr_trains - last.trains
+      if tr_delta > 0 then stats.trains_earned = stats.trains_earned + tr_delta end
+      last.trains = curr_trains
+   end
+   if curr_pracs ~= -1 then
+      local pr_delta = curr_pracs - last.pracs
+      if pr_delta > 0 then stats.pracs_earned = stats.pracs_earned + pr_delta end
+      last.pracs = curr_pracs
+   end
+   last.net_worth = curr_net_worth
+end
+
+function HandleQuest(data)
+   if data.action == "comp" then stats.quests = stats.quests + 1 end
+end
+
+-- -----------------------------------------------------------------------------
+-- REPORTING
+-- -----------------------------------------------------------------------------
+function ShowHelp(name, line, wildcards)
+   ColourNote("orange", "", string.rep("-", 60))
+   ColourNote("gold", "", " Stat Tracker Help")
+   ColourNote("orange", "", string.rep("-", 60))
+   ColourNote("silver", "", " statt report            ", "gray", "", " : Show stats table.")
+   ColourNote("silver", "", " statt report chat [chn] ", "gray", "", " : Send summary (e.g. 'gtell').")
+   ColourNote("silver", "", " statt xpmeter           ", "gray", "", " : Toggle XP Widget.")
+   ColourNote("silver", "", " statt xpmeter reset     ", "gray", "", " : Reset window position.")
+   ColourNote("silver", "", " statt reset             ", "gray", "", " : Clear stats.")
+   ColourNote("orange", "", string.rep("-", 60))
+end
+
+function comma_value(amount)
+  local formatted = tostring(amount)
+  while true do  
+    formatted, k = string.gsub(formatted, "^(-?%d+)(%d%d%d)", '%1,%2')
+    if (k==0) then break end
+  end
+  return formatted
+end
+
+function short_value(amount)
+   local n = tonumber(amount)
+   if not n then return "0" end
+   if n >= 1000000 then return string.format("%.1fm", n / 1000000)
+   elseif n >= 1000 then return string.format("%.1fk", n / 1000)
+   else return tostring(n) end
+end
+
+function GetBlootChatStr()
+   local parts = {}
+   local total = 0
+   for i, tier in ipairs(BLOOT_TIERS) do
+      local count = stats.bloot[tier] or 0
+      if count > 0 then 
+         total = total + count
+         table.insert(parts, "@w" .. "t"..i .. ":@W" .. count .. "@D") 
+      end
+   end
+   if total == 0 then return "" end
+   return string.format(" @D| @wBloot:@W%d @D(@w%s@D)", total, table.concat(parts, ","))
+end
+
+function ReportStats(name, line, wildcards)
+   local play_secs = GetPlayTime()
+   local play_str, play_mins = FormatTime(play_secs)
+   local real_secs = GetRealTime()
+   local real_str, _ = FormatTime(real_secs)
+
+   local args = wildcards[1] or ""
+   local is_chat = false
+   local channel = nil
+   if string.find(args, "chat") then is_chat = true; channel = string.match(args, "chat%s+(%w+)") end
+
+   if is_chat then
+      local output = string.format(
+         "@D[@W%s@D] @wXP:@W%s @wLV:@W%d @D| @wG:@Y%s @D| @wQP:@C%d @wTP:@M%d @wTr:@G%d @wPr:@G%d @D| @wQ:@W%d @wCP:@W%d @wGQ:@W%d @D(@W%d@ww/@W%d@wc)%s",
+         play_str, short_value(stats.xp_earned), stats.levels_gained,
+         short_value(stats.gold_earned), stats.qp_earned, stats.tp_earned, 
+         stats.trains_earned, stats.pracs_earned,
+         stats.quests, stats.campaigns,
+         stats.gq_joined, stats.gq_won, stats.gq_completed,
+         GetBlootChatStr()
+      )
+      if channel then Send(channel .. " " .. output)
+      else PrintColoredString(output) end
+   else
+      -- TABLE VIEW
+      local sep_color = "dimgray"
+      ColourNote(sep_color, "", string.rep("-", 60))
+      ColourNote("gold", "", string.format("%-20s", " Session Statistics"), "teal", "", string.format("%40s", play_str .. " "))
+      ColourNote("gray", "", string.format(" (Real Time: %s)", real_str))
+      ColourNote(sep_color, "", string.rep("-", 60))
+      
+      PrintRow("Experience", stats.xp_earned, play_mins, "lightgreen")
+      ColourNote("gray", "", string.format("   %-10s", "Levels"), "dimgray", "", " : ", "lightgreen", "", string.format("%15d", stats.levels_gained))
+
+      local g_rate = comma_value(math.floor(stats.gold_earned / play_mins))
+      ColourNote("silver", "", string.format(" %-12s", "Gold"), "dimgray", "", " : ", "gold", "", string.format("%15s", comma_value(stats.gold_earned)), "gray", "", string.format("%19s", "("..g_rate.."/min)"))
+      ColourNote("gray",   "", string.format("   %-10s", "From Sales"), "dimgray", "", " : ", "gray", "", string.format("%15s", comma_value(stats.gold_sales)))
+
+      ColourNote("", "", "")
+      PrintRow("Quest Pts", stats.qp_earned, play_mins, "cyan")
+      PrintRow("Trivia Pts", stats.tp_earned, play_mins, "magenta")
+      PrintRow("Trains", stats.trains_earned, play_mins, "lime")
+      PrintRow("Practices", stats.pracs_earned, play_mins, "lime")
+      
+      ColourNote(sep_color, "", string.rep("-", 60))
+      local count_str = string.format("Campaigns: %-4d  Quests : %-4d", stats.campaigns, stats.quests)
+      ColourNote("white", "", "   " .. count_str)
+      
+      -- ALIGNMENT FIX V5.0
+      local gq_line = string.format("   %-11s %-5d%-9s %-5d%-9s %-5d",
+             "GQ Joined:", stats.gq_joined,
+             "GQ Wins:", stats.gq_won,
+             "GQ Comp:", stats.gq_completed)
+      ColourNote("white", "", gq_line)
+
+      local total_bloot = 0
+      for _, tier in ipairs(BLOOT_TIERS) do if (stats.bloot[tier] or 0) > 0 then total_bloot = total_bloot + stats.bloot[tier] end end
+      if total_bloot > 0 then
+         ColourNote(sep_color, "", string.rep("-", 60))
+         ColourNote("gold", "", string.format(" Bonus Loot Found: %d", total_bloot))
+         for _, tier in ipairs(BLOOT_TIERS) do
+            local count = stats.bloot[tier] or 0
+            if count > 0 then ColourNote("silver", "", string.format("   %-10s : %d", tier, count)) end
+         end
+      end
+      ColourNote(sep_color, "", string.rep("-", 60))
+   end
+end
+
+function PrintRow(label, val, mins, color)
+   local per_min = val / mins
+   local val_str = comma_value(val)
+   local rate_str
+   if per_min < 10 then rate_str = string.format("%.1f", per_min)
+   else rate_str = comma_value(math.floor(per_min)) end
+   ColourNote("silver", "", string.format(" %-12s", label), "dimgray", "", " : ", color, "", string.format("%15s", val_str), "gray", "", string.format("%19s", "("..rate_str.."/min)")) 
+end
+
+function FormatTime(secs)
+   local mins = math.floor(secs / 60); if mins < 1 then mins = 1 end
+   local hours = math.floor(mins/60); local rem_mins = mins % 60
+   return string.format("%dh %02dm", hours, rem_mins), mins
+end
+
+function ResetStats()
+   stats.xp_earned = 0; stats.qp_earned = 0; stats.tp_earned = 0; stats.gold_earned = 0
+   stats.gold_sales = 0; stats.trains_earned = 0; stats.pracs_earned = 0
+   stats.quests = 0; stats.campaigns = 0; stats.gq_joined = 0; stats.gq_won = 0; stats.gq_completed = 0
+   stats.levels_gained = 0; stats.bloot = {}
+   stats.total_online_seconds = 0
+   stats.start_time = os.time(); current_session_start = os.time()
+   -- Reset Monitor Buffer
+   xp_history = {}
+   for i=1,history_size do xp_history[i]=0 end
+   monitor_uptime = 0 -- Reset uptime
+   if stats.monitor_active then DrawWindow() end
+   
+   last.tnl = -1; last.net_worth = -1; last.level = -1
+   SendNoEcho("protocol gmcp sendchar")
+   ColourNote("red", "", "Session stats reset.")
+end
+
+]]>
+</script>
+</muclient>
