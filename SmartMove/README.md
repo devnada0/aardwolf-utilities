@@ -63,7 +63,8 @@ Map your **Numpad** keys to the SmartMove syntax.
 smartmove <dir>   # Move n, s, e, w, u, or d
 smartmove help    # View current status and effective level stats
 smartmove debug   # Toggle verbose log output
+```
 
 📝 License
 Written by Morienda for the Aardwolf community.
-Free to use and modify.
+Free to use, modify, and distribute.
