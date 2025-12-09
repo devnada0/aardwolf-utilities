@@ -71,7 +71,7 @@ The plugin includes a visual **XP Rate Widget**.
 ```
 
 **Chat Summary** (`statt report chat`):
-<remove me>```text
+```text
 [1h 15m] XP:12.5m LV:2 | G:5.0m | QP:15 TP:2 Tr:4 Pr:4 | Q:10 CP:1 GQ:2 (0w/2c)
 ```
 
