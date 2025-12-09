@@ -283,7 +283,7 @@ function DrawWindow()
    if not line_h or line_h < 5 then line_h = 14 end
    
    -- Compact Widget Dimensions (Increased for 3 columns)
-   local width = 170 
+   local width = 200 
    local height = line_h + 6 -- Padding top/bottom
    
    local bg = GetThemeColor("PRIMARY_BODY", "black")
@@ -650,4 +650,5 @@ end
 
 ]]>
 </script>
+
 </muclient>
