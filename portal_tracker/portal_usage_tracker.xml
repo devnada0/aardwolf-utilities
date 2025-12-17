@@ -1,0 +1,262 @@
+<?xml version="1.0" encoding="iso-8859-1"?>
+<!DOCTYPE muclient>
+<muclient>
+<plugin
+   name="Portal_Usage_Tracker"
+   author="Morienda"
+   id="f8d4d1fd26443080af4640ea"
+   language="Lua"
+   purpose="Tracks portal usage statistics"
+   save_state="y"
+   date_written="2025-12-05 12:00:00"
+   requires="4.00"
+   version="2.0"
+   >
+<description trim="y">
+TRACKING METHOD:
+  1. Standard: Tracks "You equip X" + "WHOOSH" sequence.
+  2. Home: Tracks the explicit "home" command input.
+
+COMMANDS:
+  portal report       : Standard table view.
+  portal report chat  : Compact one-line view (good for sharing).
+  portal reset        : Clears stats and restarts timer.
+  portal help         : Shows this help file.
+</description>
+
+</plugin>
+
+<!--  Triggers  -->
+
+<triggers>
+  <!-- 1. Catch the equip line. -->
+  <trigger
+   enabled="y"
+   match="^You equip (.+) as a portal\.$"
+   regexp="y"
+   script="OnEquipPortal"
+   sequence="100"
+  >
+  </trigger>
+
+  <!-- 2. Catch the Whoosh. -->
+  <trigger
+   enabled="y"
+   match="^WHOOOOOOOOOOOOSH!$"
+   regexp="y"
+   script="OnPortalWhoosh"
+   sequence="100"
+  >
+  </trigger>
+</triggers>
+
+<!--  Aliases  -->
+
+<aliases>
+  <!-- Reporting (Handle optional 'chat' argument) -->
+  <alias
+   match="^portal report(?:\s+(chat))?$"
+   enabled="y"
+   regexp="y"
+   script="ShowStats"
+   sequence="100"
+  ></alias>
+  
+  <!-- Resetting -->
+  <alias
+   match="portal reset"
+   enabled="y"
+   script="ResetStats"
+   sequence="100"
+  ></alias>
+
+  <!-- Home Tracking (Passthrough) -->
+  <alias
+   match="^home$"
+   enabled="y"
+   regexp="y"
+   script="TrackHome"
+   sequence="100"
+  ></alias>
+
+  <!-- Help -->
+  <alias
+   match="^portal (help|\?)$"
+   enabled="y"
+   regexp="y"
+   script="ShowHelp"
+   sequence="100"
+  ></alias>
+</aliases>
+
+<!--  Script  -->
+
+<script>
+<![CDATA[
+require "serialize"
+
+-- Configuration / State
+local potential_portal = nil
+local stats = {}
+local start_time = os.time()
+
+-- ------------------------------------------------------------------
+-- LIFECYCLE
+-- ------------------------------------------------------------------
+
+function OnPluginInstall()
+   local saved_stats = GetVariable("stats_data")
+   if saved_stats then
+      local f = loadstring("return " .. saved_stats)
+      if f then stats = f() or {} end
+   end
+
+   local saved_time = GetVariable("start_time")
+   if saved_time then 
+      start_time = tonumber(saved_time) 
+   end
+   
+   ColourNote("orange", "", "Portal Tracker v2.0 loaded. Type '", "white", "", "portal help", "orange", "", "'.")
+end
+
+function OnPluginSaveState()
+   SetVariable("stats_data", serialize.save_simple(stats))
+   SetVariable("start_time", start_time)
+end
+
+-- ------------------------------------------------------------------
+-- LOGIC
+-- ------------------------------------------------------------------
+
+function OnEquipPortal(name, line, wildcards)
+   potential_portal = wildcards[1]
+end
+
+function OnPortalWhoosh(name, line, wildcards)
+   if potential_portal then
+      AddStat(potential_portal)
+      potential_portal = nil 
+   end
+end
+
+function TrackHome(name, line, wildcards)
+   -- 1. Log the stat
+   AddStat("(Command) home")
+   
+   -- 2. PASS THROUGH: Actually send 'home' to the MUD so you move!
+   Send("home")
+end
+
+function AddStat(key)
+   stats[key] = (stats[key] or 0) + 1
+   OnPluginSaveState()
+end
+
+-- ------------------------------------------------------------------
+-- UTILS
+-- ------------------------------------------------------------------
+
+function GetDurationStr()
+   local diff = os.time() - start_time
+   local days = math.floor(diff / 86400)
+   local hours = math.floor((diff % 86400) / 3600)
+   local mins = math.floor((diff % 3600) / 60)
+   
+   if days > 0 then
+      return string.format("%dd %02dh", days, hours)
+   else
+      return string.format("%02dh %02dm", hours, mins)
+   end
+end
+
+-- ------------------------------------------------------------------
+-- COMMANDS
+-- ------------------------------------------------------------------
+
+function ShowHelp(name, line, wildcards)
+   ColourNote("orange", "", string.rep("-", 60))
+   ColourNote("gold", "", " Portal Tracker Help")
+   ColourNote("orange", "", string.rep("-", 60))
+   ColourNote("silver", "", " portal report      ", "gray", "", " : Show usage table.")
+   ColourNote("silver", "", " portal report chat ", "gray", "", " : One-line output (for chat).")
+   ColourNote("silver", "", " portal reset       ", "gray", "", " : Clear stats.")
+   ColourNote("silver", "", " home               ", "gray", "", " : Counted automatically when typed.")
+   ColourNote("orange", "", string.rep("-", 60))
+end
+
+function ShowStats(name, line, wildcards)
+   -- Sort Data
+   local sorted = {}
+   local total_uses = 0
+   for k, v in pairs(stats) do
+      table.insert(sorted, {name=k, count=v})
+      total_uses = total_uses + v
+   end
+   table.sort(sorted, function(a,b) return a.count > b.count end)
+
+   -- Check mode: Table vs Chat
+   local is_chat_mode = (wildcards[1] == "chat")
+
+   if is_chat_mode then
+      -- ONE LINE MODE
+      if #sorted == 0 then
+         ColourNote("white", "", "Portal Stats: No data yet.")
+         return
+      end
+
+      local output = string.format("[Portals %s] ", GetDurationStr())
+      local first = true
+      
+      for i, v in ipairs(sorted) do
+         local pct = (v.count / total_uses) * 100
+         -- Clean up name for chat (remove "Portal of", etc to save space?)
+         -- For now keeping full name to be safe.
+         local clean_name = v.name:gsub("%(Command%) ", "") 
+         
+         if not first then output = output .. ", " end
+         output = output .. string.format("%s: %d (%.0f%%)", clean_name, v.count, pct)
+         first = false
+      end
+      
+      output = output .. string.format(" | Total: %d", total_uses)
+      
+      -- Print to screen (editable line)
+      -- Using simple Note/Paste logic or just printing it for copy/paste
+      ColourNote("cyan", "", output)
+      
+      -- Optional: Put directly into input buffer?
+      -- SetCommand(output) 
+   else
+      -- TABLE MODE
+      ColourNote("orange", "", string.rep("-", 60))
+      ColourNote("gold", "", " Portal Usage Statistics")
+      ColourNote("gray", "", string.format(" Duration: %s", GetDurationStr()))
+      ColourNote("orange", "", string.rep("-", 60))
+
+      if #sorted == 0 then
+         ColourNote("white", "", " No data collected yet.")
+      else
+         for i, v in ipairs(sorted) do
+            local pct = (v.count / total_uses) * 100
+            local count_str = string.format("%4d", v.count)
+            local pct_str = string.format("%5.1f%%", pct)
+            ColourNote("silver", "", " " .. count_str .. " ", "dimgray", "", "("..pct_str..") ", "cyan", "", v.name)
+         end
+         ColourNote("orange", "", string.rep("-", 60))
+         ColourNote("gold", "", string.format(" Total Portals Used: %d", total_uses))
+      end
+      ColourNote("orange", "", string.rep("-", 60))
+   end
+end
+
+function ResetStats(name, line, wildcards)
+   stats = {}
+   start_time = os.time()
+   potential_portal = nil
+   OnPluginSaveState()
+   ColourNote("red", "", "Portal statistics have been reset.")
+end
+
+]]>
+</script>
+</muclient>
