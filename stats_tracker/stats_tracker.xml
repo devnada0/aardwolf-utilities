@@ -8,12 +8,12 @@
    language="Lua"
    purpose="Tracks QP, TP, XP, Gold, Sales, Trains, Pracs, Bloot + XP Monitor"
    save_state="y"
-   date_written="2025-12-09 23:45:00"
+   date_written="2025-12-22 14:00:00"
    requires="4.73"
-   version="5.6"
+   version="5.7"
    >
 <description trim="y">
-HYBRID TRACKER v5.6
+HYBRID TRACKER v5.7
 Tracks stats via GMCP and Text. Includes Compact XP Widget.
 
 COMMANDS:
@@ -22,6 +22,7 @@ COMMANDS:
   statt report chat  : View compact summary (Local).
   statt xpmeter      : Toggle the XP Monitor widget.
   statt xpmeter reset: Reset window position.
+  statt debug        : Toggle debug messages for loot.
   statt reset        : Reset counters.
 </description>
 
@@ -31,7 +32,8 @@ COMMANDS:
 <triggers>
   <trigger match="CONGRATULATIONS! You have completed your campaign\." enabled="y" regexp="y" script="OnCampaignComplete" sequence="100"></trigger>
   <trigger match="^You sell .+ to .+ for ([\d,]+) gold\.$" enabled="y" regexp="y" script="OnGoldSale" sequence="100"></trigger>
-  <trigger match="^You get \(+(?<tier>[A-Za-z]+)\)+ .+ from the .*corpse of .+\.$" enabled="y" regexp="y" script="OnBlootLoot" sequence="100"></trigger>
+  <!-- Updated Bloot Trigger to capture corpse name -->
+  <trigger match="^You get \(+(?<tier>[A-Za-z]+)\)+ .+ from the .*corpse of (?<corpse_name>.+)\.$" enabled="y" regexp="y" script="OnBlootLoot" sequence="100"></trigger>
   <trigger match="^You have now joined Global Quest # \d+\." enabled="y" regexp="y" script="OnGQJoin" sequence="100"></trigger>
   <trigger match="^You were the first to complete this quest!$" enabled="y" regexp="y" script="OnGQWin" sequence="100"></trigger>
   <trigger match="^You have finished this global quest\.$" enabled="y" regexp="y" script="OnGQFinish" sequence="100"></trigger>
@@ -49,6 +51,7 @@ COMMANDS:
   <alias match="^statt(?: help|\?)?$" enabled="y" regexp="y" script="ShowHelp" sequence="100"></alias>
   <alias match="^statt xpmeter$" enabled="y" regexp="y" script="ToggleXPMonitor" sequence="100"></alias>
   <alias match="^statt xpmeter reset$" enabled="y" regexp="y" script="ResetWindow" sequence="100"></alias>
+  <alias match="^statt debug$" enabled="y" regexp="y" script="ToggleDebug" sequence="100"></alias>
 </aliases>
 
 <!-- Script -->
@@ -92,6 +95,7 @@ local xp_history = {}
 local xp_this_tick = 0
 local history_size = 900 -- 15 minutes
 local monitor_uptime = 0 -- Tracks how long monitor has been running for color logic
+local debug_mode = false -- Default debug state
 
 -- Drag State
 local drag_start_x, drag_start_y = 0, 0
@@ -282,7 +286,7 @@ function DrawWindow()
    local line_h = WindowFontInfo(win, font, 1)
    if not line_h or line_h < 5 then line_h = 14 end
    
-   -- Compact Widget Dimensions (Increased for 3 columns)
+   -- Fixed Width to prevent clipping
    local width = 200 
    local height = line_h + 6 -- Padding top/bottom
    
@@ -357,6 +361,57 @@ function ResetWindow()
 end
 
 -- -----------------------------------------------------------------------------
+-- DEBUG & BLOOT LOGIC
+-- -----------------------------------------------------------------------------
+function ToggleDebug(name, line, wildcards)
+   debug_mode = not debug_mode
+   local status = debug_mode and "ENABLED" or "DISABLED"
+   local color = debug_mode and "lime" or "red"
+   ColourNote("gold", "", "Stat Tracker Debug: ", color, "", status)
+end
+
+function OnBlootLoot(name, line, wildcards)
+   local tier = wildcards.tier
+   local corpse = wildcards.corpse_name
+   local my_name = GetInfo(1) -- Get character name
+
+   -- 1. Check for Self-Looting
+   -- Case insensitive check to be safe
+   if my_name and corpse and string.find(string.lower(corpse), string.lower(my_name), 1, true) then
+      if debug_mode then
+         ColourNote("orange", "", "[StatTracker DEBUG] ", "red", "", "Ignored Self-Loot: " .. line)
+      end
+      return
+   end
+
+   -- 2. Validate Tier
+   local is_valid_tier = false
+   for _, v in ipairs(BLOOT_TIERS) do
+      if v == tier then 
+         is_valid_tier = true 
+         break 
+      end
+   end
+
+   if not is_valid_tier then
+      if debug_mode then
+         ColourNote("orange", "", "[StatTracker DEBUG] ", "gray", "", "Ignored Invalid Tier ("..tier.."): " .. line)
+      end
+      return
+   end
+
+   -- 3. Count
+   stats.bloot[tier] = (stats.bloot[tier] or 0) + 1
+   OnPluginSaveState()
+
+   -- 4. Debug Success
+   if debug_mode then
+      ColourNote("orange", "", "[StatTracker DEBUG] ", "cyan", "", "Added Tier: '" .. tier .. "'")
+      ColourNote("gray", "", "   Source: " .. corpse)
+   end
+end
+
+-- -----------------------------------------------------------------------------
 -- REPORTING UTILS
 -- -----------------------------------------------------------------------------
 local aard_colors = {
@@ -395,7 +450,7 @@ function OnPluginInstall()
    if IsConnected() then current_session_start = os.time() end
    InitWindow()
    SendNoEcho("protocol gmcp sendchar")
-   ColourNote("cornflowerblue", "", "Stat Tracker v5.6 loaded. Type ", "white", "", "statt help", "cornflowerblue", "", ".")
+   ColourNote("cornflowerblue", "", "Stat Tracker v5.7 loaded. Type ", "white", "", "statt help", "cornflowerblue", "", ".")
 end
 
 function OnPluginSaveState()
@@ -407,11 +462,6 @@ function OnCampaignComplete(name, line, wildcards) stats.campaigns = stats.campa
 function OnGoldSale(name, line, wildcards)
    local amount = string.gsub(wildcards[1], ",", "")
    stats.gold_sales = stats.gold_sales + tonumber(amount)
-   OnPluginSaveState()
-end
-function OnBlootLoot(name, line, wildcards)
-   local tier = wildcards.tier
-   stats.bloot[tier] = (stats.bloot[tier] or 0) + 1
    OnPluginSaveState()
 end
 function OnGQJoin(name, line, wildcards) stats.gq_joined = stats.gq_joined + 1; OnPluginSaveState() end
@@ -511,6 +561,7 @@ function ShowHelp(name, line, wildcards)
    ColourNote("silver", "", " statt report chat [chn] ", "gray", "", " : Send summary (e.g. 'gtell').")
    ColourNote("silver", "", " statt xpmeter           ", "gray", "", " : Toggle XP Widget.")
    ColourNote("silver", "", " statt xpmeter reset     ", "gray", "", " : Reset window position.")
+   ColourNote("silver", "", " statt debug             ", "gray", "", " : Toggle debug messages.")
    ColourNote("silver", "", " statt reset             ", "gray", "", " : Clear stats.")
    ColourNote("orange", "", string.rep("-", 60))
 end
@@ -650,5 +701,4 @@ end
 
 ]]>
 </script>
-
 </muclient>
