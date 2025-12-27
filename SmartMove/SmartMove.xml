@@ -6,32 +6,36 @@
     author="Morienda"
     id="ab12cd34ef56ab78cd90ef13"
     language="Lua"
-    purpose="Context-aware movement (Retreat/Stand/Move) with Multiclass support"
+    purpose="Context-aware movement and skills (Retreat/Survey/Stand)"
     date_written="2025-11-24"
     requires="4.59"
-    version="1.0"
+    version="1.3"
     save_state="y"
   >
   <description trim="y">
   <![CDATA[
-  SmartMove - Context Aware Movement for Aardwolf
+  SmartMove v1.3 - Context Aware Actions for Aardwolf
   
   Usage: 
     Map your numpad keys to: smartmove n, smartmove e, etc.
+    Map your scan key to: smartmove scan
 
   Logic:
-    1. If Sleeping/Resting: Sends 'stand' then moves.
-    2. If Fighting: 
-       - Checks Class History (Multiclass support).
-       - Checks Level + (Tier * 10).
-       - If eligible, sends 'retreat <dir>'.
-       - If ineligible, attempts standard move (fails gracefully).
-    3. Otherwise: Moves normally.
+    1. Movement:
+       - Sleep/Rest: Auto-stand.
+       - Combat: Checks Retreat eligibility (Multiclass/Tier aware). 
+         Retreats if capable, moves normally if not.
+    2. Scanning:
+       - Sleep/Rest: Auto-stand.
+       - Non-Combat: Uses standard 'scan'.
+       - Combat: Checks Survey eligibility.
+         Surveys if capable, Scans if not.
 
   Commands:
     smartmove <dir>   : Move (n, s, e, w, u, d)
-    smartmove help    : Show status and syntax
-    smartmove debug   : Toggle verbose diagnostic logs
+    smartmove scan    : Context-aware scan/survey
+    smartmove help    : Show stats and eligibility
+    smartmove debug   : Toggle diagnostic logs
   ]]>
   </description>
   </plugin>
@@ -50,11 +54,10 @@
 
   <script><![CDATA[
 -- =============================================================================
---  SmartMove v1.0 by Morienda
+--  SmartMove v1.3 by Morienda
 --  Aardwolf MUSHclient Plugin
 -- =============================================================================
 
--- Performance Locals
 local exec   = Execute
 local note   = ColourNote
 local sub    = string.sub
@@ -63,21 +66,23 @@ local tonum  = tonumber
 local math_min = math.min
 local gmcpf  = nil 
 
--- State
 local DEBUG_MODE = false
 
--- Configuration: Class Retreat Requirements
--- 0=Mage, 1=Cleric, 2=Thief, 3=Warrior, 4=Ranger, 5=Paladin, 6=Psi, 7=Necro...
-local CLASS_REQS = {
+-- Configuration: Level Requirements
+-- Class IDs: 0=Mage, 1=Cleric, 2=Thief, 3=Warrior, 4=Ranger, 5=Paladin...
+
+local RETREAT_REQS = {
   ["2"] = 142, -- Thief
   ["3"] = 116, -- Warrior
   ["4"] = 121, -- Ranger
   ["5"] = 118  -- Paladin
 }
 
-local CLASS_NAMES = {
-  ["0"]="Mage", ["1"]="Cleric", ["2"]="Thief", ["3"]="Warrior", 
-  ["4"]="Ranger", ["5"]="Paladin", ["6"]="Psi", ["7"]="Necro"
+local SURVEY_REQS = {
+  ["2"] = 152, -- Thief
+  ["3"] = 133, -- Warrior
+  ["4"] = 137, -- Ranger
+  ["5"] = 149  -- Paladin
 }
 
 local DIR_MAP = {
@@ -109,8 +114,8 @@ local function get_char_info()
   }
 end
 
--- Core Logic: Can the player retreat based on ANY of their classes?
-local function check_retreat(info)
+-- Generic Logic: Checks if any class in history meets the requirement
+local function check_eligibility(info, req_table, skill_name)
   if not info then return false end
   
   -- Calculate Effective Level
@@ -118,13 +123,12 @@ local function check_retreat(info)
   local eff_level = info.level + tier_bonus
   
   if DEBUG_MODE then
-    dbg("Checking Retreat for Classes: " .. info.classes_str .. " | EffLvl: " .. eff_level)
+    dbg("Checking " .. skill_name .. " for Classes: " .. info.classes_str .. " | EffLvl: " .. eff_level)
   end
 
-  -- Check every class in history string
   for i = 1, #info.classes_str do
     local class_id = sub(info.classes_str, i, i)
-    local req = CLASS_REQS[class_id]
+    local req = req_table[class_id]
     
     if req then
       if eff_level >= req then
@@ -134,7 +138,7 @@ local function check_retreat(info)
     end
   end
   
-  if DEBUG_MODE then dbg("Fail. No eligible classes found.") end
+  if DEBUG_MODE then dbg("Fail. No eligible classes found for " .. skill_name) end
   return false
 end
 
@@ -143,15 +147,49 @@ end
 -- =============================================================================
 
 function SM_Dispatch(name, line, wc)
-  local arg = trim(wc[1]):lower()
-  if arg == "debug" then SM_ToggleDebug()
-  elseif arg == "?" or arg == "help" then SM_Help()
-  else SM_DoMove(arg) end
+  local arg = trim(wc[1]) -- Keep case for args, but lower for command check
+  local cmd = arg:lower()
+  
+  if cmd == "debug" then SM_ToggleDebug()
+  elseif cmd == "?" or cmd == "help" then SM_Help()
+  elseif cmd == "scan" or cmd:sub(1,5) == "scan " then SM_DoScan(arg)
+  else SM_DoMove(cmd) end
 end
 
 function SM_ToggleDebug()
   DEBUG_MODE = not DEBUG_MODE
   note("silver", "", "[SmartMove] Debug Mode: ", (DEBUG_MODE and "lime" or "tomato"), "", tostring(DEBUG_MODE))
+end
+
+function SM_DoScan(input)
+  local args = input:sub(5) -- Strip "scan" (keep leading space if any)
+  local info = get_char_info()
+  
+  if not info then 
+    exec("scan" .. args)
+    return
+  end
+
+  -- Auto-Stand (Sleep/Rest)
+  if info.state == 9 or info.state == 11 then
+    SendNoEcho("stand")
+  end
+
+  -- Logic: Only Survey if Fighting (8) AND Eligible
+  if info.state == 8 then
+    if check_eligibility(info, SURVEY_REQS, "Survey") then
+      if DEBUG_MODE then dbg("In Combat + Eligible -> Surveying") end
+      exec("survey" .. args)
+      return
+    else
+      if DEBUG_MODE then dbg("In Combat but Not Eligible -> Scanning") end
+    end
+  else
+    if DEBUG_MODE then dbg("Not in Combat -> Scanning") end
+  end
+
+  -- Default Fallback
+  exec("scan" .. args)
 end
 
 function SM_DoMove(input)
@@ -163,7 +201,7 @@ function SM_DoMove(input)
   
   local info = get_char_info()
   
-  -- Safety: If GMCP isn't ready, just move standard to avoid locking player
+  -- Safety: If GMCP isn't ready, move standard
   if not info then 
     exec(c)
     return
@@ -178,12 +216,10 @@ function SM_DoMove(input)
 
   -- 2. Combat -> Retreat Check
   if info.state == 8 then
-    if check_retreat(info) then
+    if check_eligibility(info, RETREAT_REQS, "Retreat") then
       exec("retreat " .. c)
     else
-      -- Try normal move. MUD will error "No way! You are fighting!", 
-      -- which is better than client spamming "Huh?" for missing skills.
-      exec(c) 
+      exec(c) -- Try normal move
     end
     return
   end
@@ -194,12 +230,13 @@ end
 
 function SM_Help()
   note("silver", "", string.rep("-", 60))
-  ColourNote("cadetblue", "", " SmartMove v1.0", "silver", "", " by Morienda")
+  ColourNote("cadetblue", "", " SmartMove v1.3", "silver", "", " by Morienda")
   note("silver", "", string.rep("-", 60))
   
   note("silver", "", " Commands:")
-  note("silver", "", "   smartmove <n|e|s|w|u|d>  : Intelligent move")
-  note("silver", "", "   smartmove debug          : Toggle diagnostic logs")
+  note("silver", "", "   smartmove <dir>   : Intelligent move (Retreats in combat)")
+  note("silver", "", "   smartmove scan    : Intelligent scan (Surveys in combat)")
+  note("silver", "", "   smartmove debug   : Toggle diagnostic logs")
   note("silver", "", "")
   
   local info = get_char_info()
@@ -208,12 +245,13 @@ function SM_Help()
   else
     local tier_bonus = math_min(info.tier, 9) * 10
     local eff_level = info.level + tier_bonus
-    local can_retreat_bool = check_retreat(info)
+    local can_retreat = check_eligibility(info, RETREAT_REQS, "Retreat")
+    local can_survey  = check_eligibility(info, SURVEY_REQS, "Survey")
     
     ColourNote("silver", "", " Current Stats:")
     ColourNote("silver", "", "   Level: ", "cyan", "", info.level, "silver", "", "  Tier: ", "cyan", "", info.tier, "silver", "", "  Eff. Level: ", "lime", "", eff_level)
     ColourNote("silver", "", "   Classes: ", "cyan", "", info.classes_str)
-    ColourNote("silver", "", "   Retreat Eligible: ", (can_retreat_bool and "lime" or "tomato"), "", tostring(can_retreat_bool))
+    ColourNote("silver", "", "   Retreat: ", (can_retreat and "lime" or "tomato"), "", tostring(can_retreat), "silver", "", "  Survey: ", (can_survey and "lime" or "tomato"), "", tostring(can_survey))
   end
   note("silver", "", string.rep("-", 60))
 end
@@ -230,7 +268,7 @@ function OnPluginInstall()
     SendNoEcho("protocols gmcp sendchar")
     SendNoEcho("protocols gmcp sendbase")
     SendNoEcho("protocols gmcp sendstatus")
-    note("silver", "", "[SmartMove] v1.0 Loaded. Type ", "cyan", "", "smartmove help", "silver", "", " for info.")
+    note("silver", "", "[SmartMove] v1.3 Loaded. Type ", "cyan", "", "smartmove help", "silver", "", " for info.")
   else
     note("tomato", "", "[SmartMove] Critical Error: GMCP Helper not found.")
   end
