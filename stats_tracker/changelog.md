@@ -2,6 +2,15 @@
 
 All notable changes to the Stat Tracker plugin will be documented in this file.
 
+## [5.8] - 2025-12-26
+
+### Fixed
+- **Self-Loot Identity:** Switched character name detection from the MUSHclient window title (`GetInfo(1)`) to the GMCP server data (`char.base.name`). This fixes a bug where self-loot was still being counted if the user's world file name did not exactly match their character name.
+
+### Changed
+- **Persistent Debug:** The `statt debug` setting is now saved in the session state and persists across client restarts.
+- **Debug Diagnostics:** Toggling debug mode now prints the detected "Target Name" and connection state, allowing users to verify the plugin is tracking the correct character.
+
 ## [5.7] - 2025-12-22
 
 ### Added

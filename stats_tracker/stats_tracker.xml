@@ -8,12 +8,12 @@
    language="Lua"
    purpose="Tracks QP, TP, XP, Gold, Sales, Trains, Pracs, Bloot + XP Monitor"
    save_state="y"
-   date_written="2025-12-22 14:00:00"
+   date_written="2025-12-26 19:00:00"
    requires="4.73"
-   version="5.7"
+   version="5.8"
    >
 <description trim="y">
-HYBRID TRACKER v5.7
+HYBRID TRACKER v5.8
 Tracks stats via GMCP and Text. Includes Compact XP Widget.
 
 COMMANDS:
@@ -22,7 +22,7 @@ COMMANDS:
   statt report chat  : View compact summary (Local).
   statt xpmeter      : Toggle the XP Monitor widget.
   statt xpmeter reset: Reset window position.
-  statt debug        : Toggle debug messages for loot.
+  statt debug        : Toggle debug messages (Persists).
   statt reset        : Reset counters.
 </description>
 
@@ -32,7 +32,7 @@ COMMANDS:
 <triggers>
   <trigger match="CONGRATULATIONS! You have completed your campaign\." enabled="y" regexp="y" script="OnCampaignComplete" sequence="100"></trigger>
   <trigger match="^You sell .+ to .+ for ([\d,]+) gold\.$" enabled="y" regexp="y" script="OnGoldSale" sequence="100"></trigger>
-  <!-- Updated Bloot Trigger to capture corpse name -->
+  <!-- Bloot Trigger captures corpse name -->
   <trigger match="^You get \(+(?<tier>[A-Za-z]+)\)+ .+ from the .*corpse of (?<corpse_name>.+)\.$" enabled="y" regexp="y" script="OnBlootLoot" sequence="100"></trigger>
   <trigger match="^You have now joined Global Quest # \d+\." enabled="y" regexp="y" script="OnGQJoin" sequence="100"></trigger>
   <trigger match="^You were the first to complete this quest!$" enabled="y" regexp="y" script="OnGQWin" sequence="100"></trigger>
@@ -86,7 +86,8 @@ local stats = {
    gq_joined = 0, gq_won = 0, gq_completed = 0,
    bloot = {}, 
    start_time = os.time(), total_online_seconds = 0,
-   monitor_active = false 
+   monitor_active = false,
+   debug_mode = false -- Now persistent
 }
 
 local current_session_start = 0
@@ -94,8 +95,7 @@ local last = { tnl = -1, level = -1, qp = -1, tp = -1, trains = -1, pracs = -1, 
 local xp_history = {} 
 local xp_this_tick = 0
 local history_size = 900 -- 15 minutes
-local monitor_uptime = 0 -- Tracks how long monitor has been running for color logic
-local debug_mode = false -- Default debug state
+local monitor_uptime = 0 
 
 -- Drag State
 local drag_start_x, drag_start_y = 0, 0
@@ -138,6 +138,7 @@ function ValidateStats()
    stats.total_online_seconds = stats.total_online_seconds or 0
    stats.start_time = stats.start_time or os.time()
    if stats.monitor_active == nil then stats.monitor_active = false end
+   if stats.debug_mode == nil then stats.debug_mode = false end
 end
 
 -- -----------------------------------------------------------------------------
@@ -173,13 +174,8 @@ end
 function InitWindow()
    local bg = GetThemeColor("PRIMARY_BODY", "black")
    
-   -- 1. Install Movewindow FIRST to get saved position
    local win_info = movewindow.install(win, miniwin.pos_top_right, miniwin.create_absolute_location, true)
-   
-   -- 2. Create Window using saved coordinates
    WindowCreate(win, win_info.window_left, win_info.window_top, 0, 0, win_info.window_mode, win_info.window_flags, bg)
-   
-   -- Use Verdana Bold for better readability
    WindowFont(win, font, "Verdana", 10, true, false, false, false, 0)
    
    if IsPluginInstalled("462b665ecb569efbf261422f") then
@@ -188,7 +184,6 @@ function InitWindow()
 
    for i = 1, history_size do xp_history[i] = 0 end
    
-   -- Hotspot covers the whole window
    WindowAddHotspot(win, "body", 0, 0, 0, 0, "", "", "OnMouseDown", "", "OnMouseUp", "Drag to move / Right-click for menu", 1, 0)
    WindowDragHandler(win, "body", "OnDragMove", "OnDragRelease", 0)
 
@@ -226,7 +221,6 @@ end
 function OnDragRelease(flags, id) movewindow.save_state(win) end
 
 function OnMouseUp(flags, id)
-   -- Check for Right Click
    if bit.band(flags, miniwin.hotspot_got_rh_mouse) ~= 0 then
       RightClickMenu()
    end
@@ -254,7 +248,7 @@ function ToggleXPMonitor(name, line, wildcards)
       xp_history = {} 
       for i = 1, history_size do xp_history[i] = 0 end
       xp_this_tick = 0
-      monitor_uptime = 0 -- Reset uptime counter
+      monitor_uptime = 0 
       WindowShow(win, true)
       EnableTimer("XP_Monitor_Tick", true)
       DrawWindow()
@@ -286,14 +280,12 @@ function DrawWindow()
    local line_h = WindowFontInfo(win, font, 1)
    if not line_h or line_h < 5 then line_h = 14 end
    
-   -- Fixed Width to prevent clipping
    local width = 200 
-   local height = line_h + 6 -- Padding top/bottom
+   local height = line_h + 6 
    
    local bg = GetThemeColor("PRIMARY_BODY", "black")
    local border = GetThemeColor("BORDER", "gray")
    
-   -- Colors
    local col_red = ColourNameToRGB("red")
    local col_green = ColourNameToRGB("lime")
    local col_sep = ColourNameToRGB("dimgray")
@@ -301,13 +293,11 @@ function DrawWindow()
    WindowResize(win, width, height, bg)
    WindowRectOp(win, 2, 0, 0, 0, 0, bg)
    
-   -- Calculate Text
-   local r60 = short_value(CalculateRate(60))   -- 1 min
-   local r300 = short_value(CalculateRate(300)) -- 5 min
-   local r900 = short_value(CalculateRate(900)) -- 15 min
+   local r60 = short_value(CalculateRate(60))   
+   local r300 = short_value(CalculateRate(300)) 
+   local r900 = short_value(CalculateRate(900)) 
    local sep = " | "
    
-   -- Determine Colors based on uptime
    local col_1m = (monitor_uptime >= 60) and col_green or col_red
    local col_5m = (monitor_uptime >= 300) and col_green or col_red
    local col_15m = (monitor_uptime >= 900) and col_green or col_red
@@ -319,28 +309,17 @@ function DrawWindow()
    
    local total_text_w = w1 + wSep + w2 + wSep + w3
    local start_x = (width - total_text_w) / 2
-   local y = 3 -- Vertical padding
+   local y = 3 
    
-   -- Draw 1m Rate
    WindowText(win, font, r60, start_x, y, 0, 0, col_1m)
-   
-   -- Draw Separator 1
    WindowText(win, font, sep, start_x + w1, y, 0, 0, col_sep)
-   
-   -- Draw 5m Rate
    WindowText(win, font, r300, start_x + w1 + wSep, y, 0, 0, col_5m)
-   
-   -- Draw Separator 2
    WindowText(win, font, sep, start_x + w1 + wSep + w2, y, 0, 0, col_sep)
-   
-   -- Draw 15m Rate
    WindowText(win, font, r900, start_x + w1 + wSep + w2 + wSep, y, 0, 0, col_15m)
    
-   -- Draw Border
    if theme_loaded and Theme and Theme.DrawBorder then Theme.DrawBorder(win)
    else WindowRectOp(win, 1, 0, 0, 0, 0, border) end
    
-   -- Update Hotspot to cover new size
    WindowMoveHotspot(win, "body", 0, 0, width, height)
    
    if IsPluginInstalled("462b665ecb569efbf261422f") then
@@ -364,22 +343,31 @@ end
 -- DEBUG & BLOOT LOGIC
 -- -----------------------------------------------------------------------------
 function ToggleDebug(name, line, wildcards)
-   debug_mode = not debug_mode
-   local status = debug_mode and "ENABLED" or "DISABLED"
-   local color = debug_mode and "lime" or "red"
+   stats.debug_mode = not stats.debug_mode
+   OnPluginSaveState() -- Persist immediately
+
+   local status = stats.debug_mode and "ENABLED" or "DISABLED"
+   local color = stats.debug_mode and "lime" or "red"
    ColourNote("gold", "", "Stat Tracker Debug: ", color, "", status)
+
+   if stats.debug_mode then
+      local char_name = gmcp("char.base.name") or "Unknown (GMCP silent)"
+      local is_connected = IsConnected()
+      ColourNote("silver", "", "   Target Name (GMCP): ", "cyan", "", char_name)
+      ColourNote("silver", "", "   Connection State  : ", "cyan", "", tostring(is_connected))
+   end
 end
 
 function OnBlootLoot(name, line, wildcards)
    local tier = wildcards.tier
    local corpse = wildcards.corpse_name
-   local my_name = GetInfo(1) -- Get character name
+   -- FIX: Use GMCP name, not Window name
+   local my_name = gmcp("char.base.name")
 
    -- 1. Check for Self-Looting
-   -- Case insensitive check to be safe
    if my_name and corpse and string.find(string.lower(corpse), string.lower(my_name), 1, true) then
-      if debug_mode then
-         ColourNote("orange", "", "[StatTracker DEBUG] ", "red", "", "Ignored Self-Loot: " .. line)
+      if stats.debug_mode then
+         ColourNote("orange", "", "[StatTracker DEBUG] ", "red", "", "Ignored Self-Loot (Corpse matches '"..my_name.."')")
       end
       return
    end
@@ -394,8 +382,8 @@ function OnBlootLoot(name, line, wildcards)
    end
 
    if not is_valid_tier then
-      if debug_mode then
-         ColourNote("orange", "", "[StatTracker DEBUG] ", "gray", "", "Ignored Invalid Tier ("..tier.."): " .. line)
+      if stats.debug_mode then
+         ColourNote("orange", "", "[StatTracker DEBUG] ", "gray", "", "Ignored Invalid Tier ("..tier..")")
       end
       return
    end
@@ -405,9 +393,8 @@ function OnBlootLoot(name, line, wildcards)
    OnPluginSaveState()
 
    -- 4. Debug Success
-   if debug_mode then
+   if stats.debug_mode then
       ColourNote("orange", "", "[StatTracker DEBUG] ", "cyan", "", "Added Tier: '" .. tier .. "'")
-      ColourNote("gray", "", "   Source: " .. corpse)
    end
 end
 
@@ -450,7 +437,7 @@ function OnPluginInstall()
    if IsConnected() then current_session_start = os.time() end
    InitWindow()
    SendNoEcho("protocol gmcp sendchar")
-   ColourNote("cornflowerblue", "", "Stat Tracker v5.7 loaded. Type ", "white", "", "statt help", "cornflowerblue", "", ".")
+   ColourNote("cornflowerblue", "", "Stat Tracker v5.8 loaded. Type ", "white", "", "statt help", "cornflowerblue", "", ".")
 end
 
 function OnPluginSaveState()
