@@ -10,10 +10,10 @@
    save_state="y"
    date_written="2025-12-26 19:00:00"
    requires="4.73"
-   version="5.8"
+   version="5.9"
    >
 <description trim="y">
-HYBRID TRACKER v5.8
+HYBRID TRACKER v6.8
 Tracks stats via GMCP and Text. Includes Compact XP Widget.
 
 COMMANDS:
@@ -30,13 +30,35 @@ COMMANDS:
 
 <!-- Triggers -->
 <triggers>
+  <!-- Campaign Start Trigger: Enables the reward collector group -->
   <trigger match="CONGRATULATIONS! You have completed your campaign\." enabled="y" regexp="y" script="OnCampaignComplete" sequence="100"></trigger>
-  <trigger match="^You sell .+ to .+ for ([\d,]+) gold\.$" enabled="y" regexp="y" script="OnGoldSale" sequence="100"></trigger>
-  <!-- Bloot Trigger captures corpse name -->
-  <trigger match="^You get \(+(?<tier>[A-Za-z]+)\)+ .+ from the .*corpse of (?<corpse_name>.+)\.$" enabled="y" regexp="y" script="OnBlootLoot" sequence="100"></trigger>
-  <trigger match="^You have now joined Global Quest # \d+\." enabled="y" regexp="y" script="OnGQJoin" sequence="100"></trigger>
+  
+  <!-- Campaign Reward Collector (Default: Disabled, Grouped via attribute) -->
+  <trigger match="^\s*Reward of (?<amount>[\d,]+) (?<type>.+) added\.$" enabled="n" group="CampaignRewards" regexp="y" script="OnCampaignReward" sequence="100"></trigger>
+
+  <!-- GQ Mob Kill Trigger -->
+  <trigger match="Congratulations, that was one of the GLOBAL QUEST mobs!" enabled="y" regexp="n" script="OnGQMobsKill" sequence="100"></trigger>
+  
+  <!-- GQ Mob Reward Collector (Default: Disabled) -->
+  <trigger match="^(?<amount>\d+) quest points awarded\.$" enabled="n" group="GQMobs" regexp="y" script="OnGQMobsReward" sequence="100"></trigger>
+
+  <!-- GQ Win Trigger: Enables the reward collector group -->
   <trigger match="^You were the first to complete this quest!$" enabled="y" regexp="y" script="OnGQWin" sequence="100"></trigger>
+
+  <!-- GQ Win Reward Collector (Default: Disabled) -->
+  <trigger match="^\s*Reward of (?<amount>[\d,]+) (?<type>.+) added\.$" enabled="n" group="GQWinRewards" regexp="y" script="OnGQWinReward" sequence="100"></trigger>
+
+  <trigger match="^You sell .+ to .+ for ([\d,]+) gold\.$" enabled="y" regexp="y" script="OnGoldSale" sequence="100"></trigger>
+  
+  <!-- Item Loot Trigger -->
+  <trigger match="^You get (?<item>.+) from the .*corpse of (?<corpse>.+)\.$" enabled="y" regexp="y" script="OnItemLoot" sequence="100" keep_evaluating="y"></trigger>
+
+  <!-- Bloot Trigger -->
+  <trigger match="^You get \(+(?<tier>[A-Za-z]+)\)+.* from the .*corpse of (?<corpse_name>.+)\.$" enabled="y" regexp="y" script="OnBlootLoot" sequence="100" ></trigger>
+  
+  <trigger match="^You have now joined Global Quest # \d+\." enabled="y" regexp="y" script="OnGQJoin" sequence="100"></trigger>
   <trigger match="^You have finished this global quest\.$" enabled="y" regexp="y" script="OnGQFinish" sequence="100"></trigger>
+  <trigger match="^.+ crumbles into [\d,]+ gold pieces\.$" enabled="y" regexp="y" script="OnItemCrumble" sequence="100"></trigger>
 </triggers>
 
 <!-- Timers -->
@@ -85,9 +107,17 @@ local stats = {
    levels_gained = 0, campaigns = 0, quests = 0,
    gq_joined = 0, gq_won = 0, gq_completed = 0,
    bloot = {}, 
+   
+   items_found = 0, keys_found = 0,
+   quest_rewards = { qp=0, gold=0, tp=0, trains=0, pracs=0 },
+   campaign_rewards = { qp=0, gold=0, tp=0, trains=0, pracs=0 },
+   gq_rewards = { qp=0, gold=0, tp=0, trains=0, pracs=0 },
+   -- NEW: GQ Win Rewards Bucket
+   gq_win_rewards = { qp=0, gold=0, tp=0, trains=0, pracs=0 },
+
    start_time = os.time(), total_online_seconds = 0,
    monitor_active = false,
-   debug_mode = false -- Now persistent
+   debug_mode = false
 }
 
 local current_session_start = 0
@@ -135,6 +165,15 @@ function ValidateStats()
    stats.gq_won = stats.gq_won or 0
    stats.gq_completed = stats.gq_completed or 0
    stats.bloot = stats.bloot or {}
+   
+   stats.items_found = stats.items_found or 0
+   stats.keys_found = stats.keys_found or 0
+   stats.quest_rewards = stats.quest_rewards or { qp=0, gold=0, tp=0, trains=0, pracs=0 }
+   stats.campaign_rewards = stats.campaign_rewards or { qp=0, gold=0, tp=0, trains=0, pracs=0 }
+   stats.gq_rewards = stats.gq_rewards or { qp=0, gold=0, tp=0, trains=0, pracs=0 }
+   -- NEW: Init GQ Win Rewards
+   stats.gq_win_rewards = stats.gq_win_rewards or { qp=0, gold=0, tp=0, trains=0, pracs=0 }
+
    stats.total_online_seconds = stats.total_online_seconds or 0
    stats.start_time = stats.start_time or os.time()
    if stats.monitor_active == nil then stats.monitor_active = false end
@@ -340,11 +379,11 @@ function ResetWindow()
 end
 
 -- -----------------------------------------------------------------------------
--- DEBUG & BLOOT LOGIC
+-- DEBUG & BLOOT & ITEMS LOGIC
 -- -----------------------------------------------------------------------------
 function ToggleDebug(name, line, wildcards)
    stats.debug_mode = not stats.debug_mode
-   OnPluginSaveState() -- Persist immediately
+   OnPluginSaveState()
 
    local status = stats.debug_mode and "ENABLED" or "DISABLED"
    local color = stats.debug_mode and "lime" or "red"
@@ -358,13 +397,58 @@ function ToggleDebug(name, line, wildcards)
    end
 end
 
+function OnItemLoot(name, line, wildcards)
+   local item = wildcards.item
+   local corpse = wildcards.corpse
+   
+   -- 1. Ignore Gold
+   if string.find(item, "gold coins") then return end
+   
+   -- 2. Ignore Self-Loot
+   local my_name = gmcp("char.base.name")
+   if my_name and corpse and string.find(string.lower(corpse), string.lower(my_name), 1, true) then
+      if stats.debug_mode then ColourNote("orange", "", "[Debug] Ignored Self-Loot Item") end
+      return
+   end
+
+   -- 3. Check for Bloot Tier collision
+   -- If the item starts with (Word), check if Word is a known tier.
+   local potential_tier = string.match(item, "^%((%a+)%) ")
+   if potential_tier then
+      for _, tier in ipairs(BLOOT_TIERS) do
+         if tier == potential_tier then
+            -- It IS a known bloot tier. Ignore it here (OnBlootLoot handles it).
+            return
+         end
+      end
+   end
+
+   -- 4. Categorize (Key vs Item)
+   if string.find(string.lower(item), "key") then
+      stats.keys_found = stats.keys_found + 1
+      if stats.debug_mode then ColourNote("orange", "", "[Debug] Key Found: " .. item) end
+   else
+      stats.items_found = stats.items_found + 1
+      if stats.debug_mode then ColourNote("orange", "", "[Debug] Item Found: " .. item) end
+   end
+   OnPluginSaveState()
+end
+
+function OnItemCrumble(name, line, wildcards)
+   if stats.items_found > 0 then
+      stats.items_found = stats.items_found - 1
+      if stats.debug_mode then 
+         ColourNote("orange", "", "[Debug] Item Crumbled -> Decremented Item Count") 
+      end
+      OnPluginSaveState()
+   end
+end
+
 function OnBlootLoot(name, line, wildcards)
    local tier = wildcards.tier
    local corpse = wildcards.corpse_name
-   -- FIX: Use GMCP name, not Window name
    local my_name = gmcp("char.base.name")
 
-   -- 1. Check for Self-Looting
    if my_name and corpse and string.find(string.lower(corpse), string.lower(my_name), 1, true) then
       if stats.debug_mode then
          ColourNote("orange", "", "[StatTracker DEBUG] ", "red", "", "Ignored Self-Loot (Corpse matches '"..my_name.."')")
@@ -372,13 +456,9 @@ function OnBlootLoot(name, line, wildcards)
       return
    end
 
-   -- 2. Validate Tier
    local is_valid_tier = false
    for _, v in ipairs(BLOOT_TIERS) do
-      if v == tier then 
-         is_valid_tier = true 
-         break 
-      end
+      if v == tier then is_valid_tier = true; break end
    end
 
    if not is_valid_tier then
@@ -388,11 +468,9 @@ function OnBlootLoot(name, line, wildcards)
       return
    end
 
-   -- 3. Count
    stats.bloot[tier] = (stats.bloot[tier] or 0) + 1
    OnPluginSaveState()
 
-   -- 4. Debug Success
    if stats.debug_mode then
       ColourNote("orange", "", "[StatTracker DEBUG] ", "cyan", "", "Added Tier: '" .. tier .. "'")
    end
@@ -437,7 +515,7 @@ function OnPluginInstall()
    if IsConnected() then current_session_start = os.time() end
    InitWindow()
    SendNoEcho("protocol gmcp sendchar")
-   ColourNote("cornflowerblue", "", "Stat Tracker v5.8 loaded. Type ", "white", "", "statt help", "cornflowerblue", "", ".")
+   ColourNote("cornflowerblue", "", "Stat Tracker v6.8 loaded. Type ", "white", "", "statt help", "cornflowerblue", "", ".")
 end
 
 function OnPluginSaveState()
@@ -445,14 +523,80 @@ function OnPluginSaveState()
    movewindow.save_state(win)
 end
 
-function OnCampaignComplete(name, line, wildcards) stats.campaigns = stats.campaigns + 1; OnPluginSaveState() end
+-- Campaign Logic
+function OnCampaignComplete(name, line, wildcards) 
+   stats.campaigns = stats.campaigns + 1
+   -- Enable reward collector group, disable after 1 second
+   EnableTriggerGroup("CampaignRewards", true)
+   DoAfterSpecial(1, 'EnableTriggerGroup("CampaignRewards", false)', 12)
+   OnPluginSaveState() 
+end
+
+function OnCampaignReward(name, line, wildcards)
+   local amount = tonumber((string.gsub(wildcards.amount, ",", "")))
+   local rtype = wildcards.type
+
+   if string.find(rtype, "quest point") then
+      stats.campaign_rewards.qp = stats.campaign_rewards.qp + amount
+   elseif string.find(rtype, "gold coin") then
+      stats.campaign_rewards.gold = stats.campaign_rewards.gold + amount
+   elseif string.find(rtype, "trivia point") then
+      stats.campaign_rewards.tp = stats.campaign_rewards.tp + amount
+   elseif string.find(rtype, "training session") then
+      stats.campaign_rewards.trains = stats.campaign_rewards.trains + amount
+   elseif string.find(rtype, "practice") then
+      stats.campaign_rewards.pracs = stats.campaign_rewards.pracs + amount
+   end
+   OnPluginSaveState()
+end
+
+-- GQ Mob Rewards
+function OnGQMobsKill(name, line, wildcards)
+   EnableTriggerGroup("GQMobs", true)
+   DoAfterSpecial(1, 'EnableTriggerGroup("GQMobs", false)', 12)
+end
+
+function OnGQMobsReward(name, line, wildcards)
+   local amount = tonumber(wildcards.amount)
+   stats.gq_rewards.qp = stats.gq_rewards.qp + amount
+   OnPluginSaveState()
+end
+
+-- NEW: GQ Win Rewards Logic
+function OnGQWin(name, line, wildcards) 
+   stats.gq_won = stats.gq_won + 1
+   stats.gq_completed = stats.gq_completed + 1
+   
+   -- Enable reward collector group, disable after 1 second
+   EnableTriggerGroup("GQWinRewards", true)
+   DoAfterSpecial(1, 'EnableTriggerGroup("GQWinRewards", false)', 12)
+   OnPluginSaveState() 
+end
+
+function OnGQWinReward(name, line, wildcards)
+   local amount = tonumber((string.gsub(wildcards.amount, ",", "")))
+   local rtype = wildcards.type
+
+   if string.find(rtype, "quest point") then
+      stats.gq_win_rewards.qp = stats.gq_win_rewards.qp + amount
+   elseif string.find(rtype, "gold coin") then
+      stats.gq_win_rewards.gold = stats.gq_win_rewards.gold + amount
+   elseif string.find(rtype, "trivia point") then
+      stats.gq_win_rewards.tp = stats.gq_win_rewards.tp + amount
+   elseif string.find(rtype, "training session") then
+      stats.gq_win_rewards.trains = stats.gq_win_rewards.trains + amount
+   elseif string.find(rtype, "practice") then
+      stats.gq_win_rewards.pracs = stats.gq_win_rewards.pracs + amount
+   end
+   OnPluginSaveState()
+end
+
 function OnGoldSale(name, line, wildcards)
    local amount = string.gsub(wildcards[1], ",", "")
    stats.gold_sales = stats.gold_sales + tonumber(amount)
    OnPluginSaveState()
 end
 function OnGQJoin(name, line, wildcards) stats.gq_joined = stats.gq_joined + 1; OnPluginSaveState() end
-function OnGQWin(name, line, wildcards) stats.gq_won = stats.gq_won + 1; stats.gq_completed = stats.gq_completed + 1; OnPluginSaveState() end
 function OnGQFinish(name, line, wildcards) stats.gq_completed = stats.gq_completed + 1; OnPluginSaveState() end
 
 function OnPluginBroadcast(msg, id, name, text)
@@ -534,7 +678,18 @@ function HandleWorth(data)
 end
 
 function HandleQuest(data)
-   if data.action == "comp" then stats.quests = stats.quests + 1 end
+   if data.action == "comp" then 
+      stats.quests = stats.quests + 1 
+      
+      -- Use totqp directly (includes Lucky/Daily/Double bonuses)
+      stats.quest_rewards.qp = stats.quest_rewards.qp + (tonumber(data.totqp) or 0)
+      stats.quest_rewards.gold = stats.quest_rewards.gold + (tonumber(data.gold) or 0)
+      stats.quest_rewards.tp = stats.quest_rewards.tp + (tonumber(data.tp) or 0)
+      stats.quest_rewards.trains = stats.quest_rewards.trains + (tonumber(data.trains) or 0)
+      stats.quest_rewards.pracs = stats.quest_rewards.pracs + (tonumber(data.pracs) or 0)
+      
+      OnPluginSaveState()
+   end
 end
 
 -- -----------------------------------------------------------------------------
@@ -616,50 +771,93 @@ function ReportStats(name, line, wildcards)
       ColourNote(sep_color, "", string.rep("-", 60))
       
       PrintRow("Experience", stats.xp_earned, play_mins, "lightgreen")
-      ColourNote("gray", "", string.format("   %-10s", "Levels"), "dimgray", "", " : ", "lightgreen", "", string.format("%15d", stats.levels_gained))
+      ColourNote("gray", "", string.format("  %-12s", "Levels"), "dimgray", "", " : ", "lightgreen", "", string.format("%15d", stats.levels_gained))
+	  
+	  ColourNote("", "", "")	  
 
       local g_rate = comma_value(math.floor(stats.gold_earned / play_mins))
-      ColourNote("silver", "", string.format(" %-12s", "Gold"), "dimgray", "", " : ", "gold", "", string.format("%15s", comma_value(stats.gold_earned)), "gray", "", string.format("%19s", "("..g_rate.."/min)"))
-      ColourNote("gray",   "", string.format("   %-10s", "From Sales"), "dimgray", "", " : ", "gray", "", string.format("%15s", comma_value(stats.gold_sales)))
+      ColourNote("silver", "", string.format(" %-13s", "Gold"), "dimgray", "", " : ", "gold", "", string.format("%15s", comma_value(stats.gold_earned)), "gray", "", string.format("%19s", "("..g_rate.."/min)"))
+      ColourNote("gray",   "", string.format("  %-12s", "From Sales"), "dimgray", "", " : ", "gray", "", string.format("%15s", comma_value(stats.gold_sales)))
+      
+      if stats.quest_rewards.gold > 0 then
+         ColourNote("gray",   "", string.format("  %-12s", "From Quests"), "dimgray", "", " : ", "gray", "", string.format("%15s", comma_value(stats.quest_rewards.gold)))
+      end
+	  
+      if stats.campaign_rewards.gold > 0 then
+         ColourNote("gray",   "", string.format("  %-12s", "From Campgn"), "dimgray", "", " : ", "gray", "", string.format("%15s", comma_value(stats.campaign_rewards.gold)))
+      end
+
+      if stats.gq_win_rewards.gold > 0 then
+         ColourNote("gray",   "", string.format("  %-12s", "From GQ Wins"), "dimgray", "", " : ", "gray", "", string.format("%15s", comma_value(stats.gq_win_rewards.gold)))
+      end
 
       ColourNote("", "", "")
-      PrintRow("Quest Pts", stats.qp_earned, play_mins, "cyan")
-      PrintRow("Trivia Pts", stats.tp_earned, play_mins, "magenta")
-      PrintRow("Trains", stats.trains_earned, play_mins, "lime")
-      PrintRow("Practices", stats.pracs_earned, play_mins, "lime")
+      -- Pass Quest, Campaign, GQ Mob, and GQ Win values to PrintRow
+      PrintRow("Quest Pts", stats.qp_earned, play_mins, "cyan", stats.quest_rewards.qp, stats.campaign_rewards.qp, stats.gq_rewards.qp, stats.gq_win_rewards.qp)
+	  
+	  ColourNote("", "", "")
+	  
+      PrintRow("Trivia Pts", stats.tp_earned, play_mins, "magenta", stats.quest_rewards.tp, stats.campaign_rewards.tp, stats.gq_rewards.tp, stats.gq_win_rewards.tp)
+	  
+	  ColourNote("", "", "")
+	  
+      PrintRow("Trains", stats.trains_earned, play_mins, "lime", stats.quest_rewards.trains, stats.campaign_rewards.trains, stats.gq_rewards.trains, stats.gq_win_rewards.trains)
+	  
+	  ColourNote("", "", "")
+	  
+      PrintRow("Practices", stats.pracs_earned, play_mins, "lime", stats.quest_rewards.pracs, stats.campaign_rewards.pracs, stats.gq_rewards.pracs, stats.gq_win_rewards.pracs)
       
       ColourNote(sep_color, "", string.rep("-", 60))
-      local count_str = string.format("Campaigns: %-4d  Quests : %-4d", stats.campaigns, stats.quests)
+      local count_str = string.format("Campaigns:  %-4d  Quests :  %-4d", stats.campaigns, stats.quests)
       ColourNote("white", "", "   " .. count_str)
       
-      -- ALIGNMENT FIX V5.0
-      local gq_line = string.format("   %-11s %-5d%-9s %-5d%-9s %-5d",
+      local gq_line = string.format("   %-11s %-6d%-9s %-6d%-9s %-5d",
              "GQ Joined:", stats.gq_joined,
              "GQ Wins:", stats.gq_won,
              "GQ Comp:", stats.gq_completed)
       ColourNote("white", "", gq_line)
 
+      ColourNote(sep_color, "", string.rep("-", 60))
+      
+      if stats.items_found > 0 or stats.keys_found > 0 then
+         ColourNote("silver", "", string.format("   %-12s : %-5d   %-12s : %-5d", "Items Looted", stats.items_found, "Keys Found", stats.keys_found))
+      end
+
       local total_bloot = 0
       for _, tier in ipairs(BLOOT_TIERS) do if (stats.bloot[tier] or 0) > 0 then total_bloot = total_bloot + stats.bloot[tier] end end
       if total_bloot > 0 then
-         ColourNote(sep_color, "", string.rep("-", 60))
-         ColourNote("gold", "", string.format(" Bonus Loot Found: %d", total_bloot))
+         ColourNote("", "", "")
+         ColourNote("gold", "", string.format("   Bonus Loot Found: %d", total_bloot))
          for _, tier in ipairs(BLOOT_TIERS) do
             local count = stats.bloot[tier] or 0
-            if count > 0 then ColourNote("silver", "", string.format("   %-10s : %d", tier, count)) end
+            if count > 0 then ColourNote("silver", "", string.format("     %-10s : %d", tier, count)) end
          end
       end
       ColourNote(sep_color, "", string.rep("-", 60))
    end
 end
 
-function PrintRow(label, val, mins, color)
+function PrintRow(label, val, mins, color, quest_val, camp_val, gq_val, gq_win_val)
    local per_min = val / mins
    local val_str = comma_value(val)
    local rate_str
    if per_min < 10 then rate_str = string.format("%.1f", per_min)
    else rate_str = comma_value(math.floor(per_min)) end
-   ColourNote("silver", "", string.format(" %-12s", label), "dimgray", "", " : ", color, "", string.format("%15s", val_str), "gray", "", string.format("%19s", "("..rate_str.."/min)")) 
+   
+   ColourNote("silver", "", string.format(" %-13s", label), "dimgray", "", " : ", color, "", string.format("%15s", val_str), "gray", "", string.format("%19s", "("..rate_str.."/min)")) 
+   
+   if quest_val and quest_val > 0 then
+      ColourNote("gray", "", string.format("  %-12s", "From Quests"), "dimgray", "", " : ", "gray", "", string.format("%15s", comma_value(quest_val)))
+   end
+   if camp_val and camp_val > 0 then
+      ColourNote("gray", "", string.format("  %-12s", "From Campgn"), "dimgray", "", " : ", "gray", "", string.format("%15s", comma_value(camp_val)))
+   end
+   if gq_val and gq_val > 0 then
+      ColourNote("gray", "", string.format("  %-12s", "From GQ Mobs"), "dimgray", "", " : ", "gray", "", string.format("%15s", comma_value(gq_val)))
+   end
+   if gq_win_val and gq_win_val > 0 then
+      ColourNote("gray", "", string.format("  %-12s", "From GQ Wins"), "dimgray", "", " : ", "gray", "", string.format("%15s", comma_value(gq_win_val)))
+   end
 end
 
 function FormatTime(secs)
@@ -673,12 +871,18 @@ function ResetStats()
    stats.gold_sales = 0; stats.trains_earned = 0; stats.pracs_earned = 0
    stats.quests = 0; stats.campaigns = 0; stats.gq_joined = 0; stats.gq_won = 0; stats.gq_completed = 0
    stats.levels_gained = 0; stats.bloot = {}
+   
+   stats.items_found = 0; stats.keys_found = 0
+   stats.quest_rewards = { qp=0, gold=0, tp=0, trains=0, pracs=0 }
+   stats.campaign_rewards = { qp=0, gold=0, tp=0, trains=0, pracs=0 }
+   stats.gq_rewards = { qp=0, gold=0, tp=0, trains=0, pracs=0 }
+   stats.gq_win_rewards = { qp=0, gold=0, tp=0, trains=0, pracs=0 }
+
    stats.total_online_seconds = 0
    stats.start_time = os.time(); current_session_start = os.time()
-   -- Reset Monitor Buffer
    xp_history = {}
    for i=1,history_size do xp_history[i]=0 end
-   monitor_uptime = 0 -- Reset uptime
+   monitor_uptime = 0 
    if stats.monitor_active then DrawWindow() end
    
    last.tnl = -1; last.net_worth = -1; last.level = -1
