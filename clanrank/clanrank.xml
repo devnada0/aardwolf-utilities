@@ -1,1 +1,151 @@
+<?xml version="1.0" encoding="iso-8859-1"?>
+<!DOCTYPE muclient>
+<muclient>
+<plugin
+   name="clanrank"
+   author="Morienda"
+   id="a7a2d6e3c9f2b1a8d5e4c6b7"
+   language="Lua"
+   purpose="Lists online clan members sorted by rank"
+   date_written="2026-01-22 14:30:00"
+   requires="4.00"
+   version="3.0"
+   >
+</plugin>
 
+<!--  ALIAS  -->
+<aliases>
+  <alias
+   match="^clanrank (.+)$"
+   enabled="y"
+   regexp="y"
+   script="StartClanCheck"
+   sequence="100"
+  >
+  </alias>
+</aliases>
+
+<!--  TRIGGERS  -->
+<triggers>
+  <!-- GROUP: ClanRankWho (Capturing names) -->
+  
+  <!-- Universal Line Matcher: Matches "[...stuff...] Name and other stuff" -->
+  <trigger
+   group="ClanRankWho" enabled="n" regexp="y" omit_from_output="y" sequence="100"
+   match="^\[.+?\] (?<content>.+)$"
+   script="CaptureWhoLine"
+  ></trigger>
+
+  <!-- Gag Headers/Footers -->
+  <trigger group="ClanRankWho" enabled="n" regexp="y" omit_from_output="y" sequence="100" match="^\s*Aardwolf Players Online\s*$"></trigger>
+  <trigger group="ClanRankWho" enabled="n" regexp="y" omit_from_output="y" sequence="100" match="^Use 'swho' to see sorted lists.*"></trigger>
+  <trigger group="ClanRankWho" enabled="n" regexp="y" omit_from_output="y" sequence="100" match="^Players found:.*"></trigger>
+  
+  <!-- Transition: Switch to Roster mode when WHO finishes -->
+  <trigger
+   group="ClanRankWho" enabled="n" regexp="y" omit_from_output="y" sequence="100"
+   match="^Players invis:.*"
+   script="EndWhoCapture"
+  ></trigger>
+
+  <!-- GROUP: ClanRankRoster (Processing sorted list) -->
+
+  <!-- Process data lines -->
+  <trigger
+   group="ClanRankRoster" enabled="n" regexp="y" omit_from_output="y" sequence="100"
+   match="^\s*(?<num>\d+)\s+(?<name>[A-Za-z]+)\s+(?<rank>.+?)\s+(?<lvl>\d+)\s+(?<class>\w+).+$"
+   script="ProcessRosterLine"
+  ></trigger>
+
+  <!-- Gag Roster Headers -->
+  <trigger group="ClanRankRoster" enabled="n" regexp="y" omit_from_output="y" sequence="100" match="^  Clan roster for.*"></trigger>
+  <trigger group="ClanRankRoster" enabled="n" regexp="y" omit_from_output="y" sequence="100" match="^No\. Name.*"></trigger>
+  <trigger group="ClanRankRoster" enabled="n" regexp="y" omit_from_output="y" sequence="100" match="^--- ----.*"></trigger>
+
+  <!-- Finish -->
+  <trigger
+   group="ClanRankRoster" enabled="n" regexp="y" omit_from_output="y" sequence="100"
+   match="^\d+ members counted\.$"
+   script="EndRoster"
+  ></trigger>
+
+</triggers>
+
+<script>
+<![CDATA[
+local raw_who_lines = {}
+local target_clan = ""
+
+function StartClanCheck(name, line, wildcards)
+   target_clan = wildcards[1]
+   raw_who_lines = {} 
+   
+   ColourNote("orange", "", "Checking online members for clan: " .. target_clan .. "...")
+   
+   -- Turn on Who capture, Turn off Roster (safety)
+   EnableTriggerGroup("ClanRankRoster", false)
+   EnableTriggerGroup("ClanRankWho", true)
+   
+   SendNoEcho("who " .. target_clan)
+end
+
+function CaptureWhoLine(name, line, wildcards)
+   -- Save the whole line to search for names and *AFK* tags later
+   table.insert(raw_who_lines, wildcards.content)
+end
+
+function EndWhoCapture(name, line, wildcards)
+   EnableTriggerGroup("ClanRankWho", false)
+   EnableTriggerGroup("ClanRankRoster", true)
+   
+   Note("")
+   ColourNote("lime", "", "--- Online Members of " .. target_clan .. " (Sorted by Rank) ---")
+   ColourNote("silver", "", string.format("%-4s %-12s %-20s %-4s %-10s", "No.", "Name", "Rank", "Lvl", "Class"))
+   ColourNote("gray", "", string.rep("-", 65))
+   
+   SendNoEcho("roster " .. target_clan .. " 2")
+end
+
+function ProcessRosterLine(name, line, wildcards)
+   local rosterName = wildcards.name
+   local found = false
+   local is_afk = false
+   
+   -- Search for the roster name inside the captured who lines
+   -- %f[%a] ensures we match "Al" but not "Alaskoch"
+   local pattern = "%f[%a]" .. rosterName .. "%f[%A]"
+   
+   for _, raw_line in ipairs(raw_who_lines) do
+      if string.find(raw_line, pattern) then
+         found = true
+         -- Check for AFK status in the raw line
+         if string.find(raw_line, "*AFK*", 1, true) then
+            is_afk = true
+         end
+         break
+      end
+   end
+   
+   if found then
+      ColourTell("silver", "", string.format("%-4s ", wildcards.num))
+      ColourTell("white", "", string.format("%-12s ", wildcards.name))
+      ColourTell("cyan", "", string.format("%-20s ", wildcards.rank))
+      ColourTell("silver", "", string.format("%-4s ", wildcards.lvl))
+      ColourTell("silver", "", string.format("%-10s", wildcards.class))
+      
+      if is_afk then
+         ColourNote("yellow", "", " [AFK]")
+      else
+         Note("") -- newline
+      end
+   end
+end
+
+function EndRoster(name, line, wildcards)
+   EnableTriggerGroup("ClanRankRoster", false)
+   ColourNote("gray", "", string.rep("-", 65))
+   Note("End of sorted online list.")
+end
+]]>
+</script>
+</muclient>
