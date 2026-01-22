@@ -23,11 +23,11 @@ Here is the updated `README.md` using the name **ClanRank**.
 
 ## Installation
 
-1.  Download the `ClanRankSorter.xml` file from this repository.
+1.  Download the `clanrank.xml` file from this repository.
 2.  Open **MUSHclient**.
 3.  Go to the **File** menu and select **Plugins** (or press `Ctrl+Shift+P`).
 4.  Click the **Add** button.
-5.  Navigate to where you saved `ClanRankSorter.xml`, select it, and click **Open**.
+5.  Navigate to where you saved `clanrank.xml`, select it, and click **Open**.
 
 ## Usage
 
@@ -40,7 +40,6 @@ clanrank <clanname>
 ### Examples:
 *   `clanrank boot`
 *   `clanrank emerald`
-*   `clanrank wolfen`
 
 ## Example Output
 
