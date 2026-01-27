@@ -8,12 +8,12 @@
    language="Lua"
    purpose="Tracks QP, TP, XP, Gold, Sales, Trains, Pracs, Bloot + XP Monitor"
    save_state="y"
-   date_written="2025-12-26 19:00:00"
+   date_written="2026-01-21 16:00:00"
    requires="4.73"
-   version="5.9"
+   version="6.0"
    >
 <description trim="y">
-HYBRID TRACKER v6.8
+HYBRID TRACKER v6.0
 Tracks stats via GMCP and Text. Includes Compact XP Widget.
 
 COMMANDS:
@@ -47,6 +47,21 @@ COMMANDS:
 
   <!-- GQ Win Reward Collector (Default: Disabled) -->
   <trigger match="^\s*Reward of (?<amount>[\d,]+) (?<type>.+) added\.$" enabled="n" group="GQWinRewards" regexp="y" script="OnGQWinReward" sequence="100"></trigger>
+
+  <!-- Superhero Train Refund Fix -->
+  <trigger match="^Restoring previous superhero stats plus (?<amount>\d+) available training sessions\.$" enabled="y" regexp="y" script="OnSHRestore" sequence="100"></trigger>
+
+  <!-- Trivia Bonus Mob (Fixed Regex) -->
+  <trigger match="^You killed a Trivia Point bonus mob!! Trivia point added\.$" enabled="y" regexp="y" script="OnTrivBonusMob" sequence="100"></trigger>  
+
+  <!-- Combat Defense Events -->
+  <trigger match="^Unseen forces prevent .*'s dirt from blinding you\.$" enabled="y" regexp="y" script="OnCombatEvent" name="nodirt" sequence="100"></trigger>
+  <trigger match="^Unseen forces remove .*'s poison from you before it can take hold\.$" enabled="y" regexp="y" script="OnCombatEvent" name="nomarbu" sequence="100"></trigger>
+  <trigger match="^You are magically protected from being teleported\.$" enabled="y" regexp="y" script="OnCombatEvent" name="noteleport" sequence="100"></trigger>
+  <trigger match="^Vira's blessing protects you from .*'s vorpal attack\.$" enabled="y" regexp="y" script="OnCombatEvent" name="novorpal" sequence="100"></trigger>
+  <trigger match="^Unseen forces protect you from .*'s tangling web\.$" enabled="y" regexp="y" script="OnCombatEvent" name="noweb" sequence="100"></trigger>
+  <trigger match="^.+ makes a scary face but you are far too brave to be scared that easily!$" enabled="y" regexp="y" script="OnCombatEvent" name="bravery" sequence="100"></trigger>
+  <trigger match="^You have been teleported!$" enabled="y" regexp="y" script="OnCombatEvent" name="teleported" sequence="100"></trigger>
 
   <trigger match="^You sell .+ to .+ for ([\d,]+) gold\.$" enabled="y" regexp="y" script="OnGoldSale" sequence="100"></trigger>
   
@@ -112,8 +127,10 @@ local stats = {
    quest_rewards = { qp=0, gold=0, tp=0, trains=0, pracs=0 },
    campaign_rewards = { qp=0, gold=0, tp=0, trains=0, pracs=0 },
    gq_rewards = { qp=0, gold=0, tp=0, trains=0, pracs=0 },
-   -- NEW: GQ Win Rewards Bucket
    gq_win_rewards = { qp=0, gold=0, tp=0, trains=0, pracs=0 },
+   
+   triv_mob_rewards = 0,
+   combat_events = { nodirt=0, nomarbu=0, noteleport=0, novorpal=0, noweb=0, bravery=0, teleported=0 },
 
    start_time = os.time(), total_online_seconds = 0,
    monitor_active = false,
@@ -171,8 +188,19 @@ function ValidateStats()
    stats.quest_rewards = stats.quest_rewards or { qp=0, gold=0, tp=0, trains=0, pracs=0 }
    stats.campaign_rewards = stats.campaign_rewards or { qp=0, gold=0, tp=0, trains=0, pracs=0 }
    stats.gq_rewards = stats.gq_rewards or { qp=0, gold=0, tp=0, trains=0, pracs=0 }
-   -- NEW: Init GQ Win Rewards
    stats.gq_win_rewards = stats.gq_win_rewards or { qp=0, gold=0, tp=0, trains=0, pracs=0 }
+   
+   stats.triv_mob_rewards = stats.triv_mob_rewards or 0
+   
+   -- FIX: Explicitly initialize every key to handle migration from older versions
+   stats.combat_events = stats.combat_events or {}
+   stats.combat_events.nodirt = stats.combat_events.nodirt or 0
+   stats.combat_events.nomarbu = stats.combat_events.nomarbu or 0
+   stats.combat_events.noteleport = stats.combat_events.noteleport or 0
+   stats.combat_events.novorpal = stats.combat_events.novorpal or 0
+   stats.combat_events.noweb = stats.combat_events.noweb or 0
+   stats.combat_events.bravery = stats.combat_events.bravery or 0
+   stats.combat_events.teleported = stats.combat_events.teleported or 0
 
    stats.total_online_seconds = stats.total_online_seconds or 0
    stats.start_time = stats.start_time or os.time()
@@ -515,7 +543,7 @@ function OnPluginInstall()
    if IsConnected() then current_session_start = os.time() end
    InitWindow()
    SendNoEcho("protocol gmcp sendchar")
-   ColourNote("cornflowerblue", "", "Stat Tracker v6.8 loaded. Type ", "white", "", "statt help", "cornflowerblue", "", ".")
+   ColourNote("cornflowerblue", "", "Stat Tracker v6.2 loaded. Type ", "white", "", "statt help", "cornflowerblue", "", ".")
 end
 
 function OnPluginSaveState()
@@ -562,7 +590,7 @@ function OnGQMobsReward(name, line, wildcards)
    OnPluginSaveState()
 end
 
--- NEW: GQ Win Rewards Logic
+-- GQ Win Rewards Logic
 function OnGQWin(name, line, wildcards) 
    stats.gq_won = stats.gq_won + 1
    stats.gq_completed = stats.gq_completed + 1
@@ -589,6 +617,33 @@ function OnGQWinReward(name, line, wildcards)
       stats.gq_win_rewards.pracs = stats.gq_win_rewards.pracs + amount
    end
    OnPluginSaveState()
+end
+
+-- Superhero Refund Logic
+function OnSHRestore(name, line, wildcards)
+   local amount = tonumber(wildcards.amount)
+   if amount and amount > 0 then
+      stats.trains_earned = stats.trains_earned - amount
+      if stats.debug_mode then
+         ColourNote("orange", "", "[Debug] Superhero Restore detected. Subtracting " .. amount .. " trains.")
+      end
+      OnPluginSaveState()
+   end
+end
+
+-- Trivia Bonus Mob
+function OnTrivBonusMob(name, line, wildcards)
+   stats.triv_mob_rewards = stats.triv_mob_rewards + 1
+   OnPluginSaveState()
+end
+
+-- Combat Events
+function OnCombatEvent(name, line, wildcards)
+   local key = name -- trigger name matches key (nodirt, nomarbu, etc)
+   if stats.combat_events[key] then
+      stats.combat_events[key] = stats.combat_events[key] + 1
+      OnPluginSaveState()
+   end
 end
 
 function OnGoldSale(name, line, wildcards)
@@ -792,12 +847,12 @@ function ReportStats(name, line, wildcards)
       end
 
       ColourNote("", "", "")
-      -- Pass Quest, Campaign, GQ Mob, and GQ Win values to PrintRow
+      -- Pass Quest, Campaign, GQ Mob, GQ Win, and Triv Bonus values to PrintRow
       PrintRow("Quest Pts", stats.qp_earned, play_mins, "cyan", stats.quest_rewards.qp, stats.campaign_rewards.qp, stats.gq_rewards.qp, stats.gq_win_rewards.qp)
 	  
 	  ColourNote("", "", "")
 	  
-      PrintRow("Trivia Pts", stats.tp_earned, play_mins, "magenta", stats.quest_rewards.tp, stats.campaign_rewards.tp, stats.gq_rewards.tp, stats.gq_win_rewards.tp)
+      PrintRow("Trivia Pts", stats.tp_earned, play_mins, "magenta", stats.quest_rewards.tp, stats.campaign_rewards.tp, stats.gq_rewards.tp, stats.gq_win_rewards.tp, stats.triv_mob_rewards)
 	  
 	  ColourNote("", "", "")
 	  
@@ -833,11 +888,32 @@ function ReportStats(name, line, wildcards)
             if count > 0 then ColourNote("silver", "", string.format("     %-10s : %d", tier, count)) end
          end
       end
+      
+      -- NEW: Combat Events Section
+      local total_events = 0
+      for k, v in pairs(stats.combat_events) do total_events = total_events + v end
+      
+      if total_events > 0 then
+         ColourNote(sep_color, "", string.rep("-", 60))
+         ColourNote("gold", "", " Events:")
+         
+         local ev = stats.combat_events
+         local row1 = string.format("   %-13s : %-5d   %-13s : %-5d", "Nodirt Wish", ev.nodirt, "Nomarbu Wish", ev.nomarbu)
+         local row2 = string.format("   %-13s : %-5d   %-13s : %-5d", "Noweb Wish", ev.noweb, "Novorpal Wish", ev.novorpal)
+         local row3 = string.format("   %-13s : %-5d   %-13s : %-5d", "Bravery Wish", ev.bravery, "Noteleport", ev.noteleport)
+         local row4 = string.format("   %-13s : %-5d", "Teleported", ev.teleported)
+         
+         ColourNote("silver", "", row1)
+         ColourNote("silver", "", row2)
+         ColourNote("silver", "", row3)
+         ColourNote("silver", "", row4)
+      end
+      
       ColourNote(sep_color, "", string.rep("-", 60))
    end
 end
 
-function PrintRow(label, val, mins, color, quest_val, camp_val, gq_val, gq_win_val)
+function PrintRow(label, val, mins, color, quest_val, camp_val, gq_val, gq_win_val, triv_mob_val)
    local per_min = val / mins
    local val_str = comma_value(val)
    local rate_str
@@ -858,6 +934,9 @@ function PrintRow(label, val, mins, color, quest_val, camp_val, gq_val, gq_win_v
    if gq_win_val and gq_win_val > 0 then
       ColourNote("gray", "", string.format("  %-12s", "From GQ Wins"), "dimgray", "", " : ", "gray", "", string.format("%15s", comma_value(gq_win_val)))
    end
+   if triv_mob_val and triv_mob_val > 0 then
+      ColourNote("gray", "", string.format("  %-12s", "From BonusMob"), "dimgray", "", " : ", "gray", "", string.format("%15s", comma_value(triv_mob_val)))
+   end
 end
 
 function FormatTime(secs)
@@ -877,6 +956,10 @@ function ResetStats()
    stats.campaign_rewards = { qp=0, gold=0, tp=0, trains=0, pracs=0 }
    stats.gq_rewards = { qp=0, gold=0, tp=0, trains=0, pracs=0 }
    stats.gq_win_rewards = { qp=0, gold=0, tp=0, trains=0, pracs=0 }
+   
+   stats.triv_mob_rewards = 0
+   -- NEW: Added bravery to combat_events
+   stats.combat_events = { nodirt=0, nomarbu=0, noteleport=0, novorpal=0, noweb=0, bravery=0, teleported=0 }
 
    stats.total_online_seconds = 0
    stats.start_time = os.time(); current_session_start = os.time()

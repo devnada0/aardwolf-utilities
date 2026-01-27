@@ -1,6 +1,18 @@
 # Changelog
 
-All notable changes to the Stat Tracker plugin will be documented in this file.
+
+## [6.0] - 2026-01-27
+
+### Added
+- **Combat Events:** Added a new report section to track defensive wish activations (Nodirt, Nomarbu, Noteleport, Novorpal, Noweb, Bravery) and successful Teleports against the player.
+- **Superhero Logic:** Added logic to detect the "Stat Restore" phase when reaching level 201. The plugin now subtracts the refunded trains from the session total so that becoming a Superhero doesn't artificially inflate the "Trains Earned" stat.
+- **Trivia Bonus:** Added tracking for Trivia Points earned specifically from killing "Trivia Bonus Mobs".
+- **GQ Granularity:** Separated Global Quest rewards into two distinct categories in the report: "From GQ Mobs" (kills) and "From GQ Wins" (completion bonus).
+
+### Fixed
+- **Campaign Parsing:** Updated the Campaign Reward trigger to handle leading whitespace/indentation, which was causing rewards to be missed in the report.
+- **Trivia Regex:** Fixed the trigger for Trivia Bonus Mobs to correctly match the trailing period in the game output.
+- **Migration Safety:** Added explicit initialization for new data fields to prevent "nil value" crashes when upgrading from older versions with saved session data.
 
 ## [5.9] - 2026-01-11
 
