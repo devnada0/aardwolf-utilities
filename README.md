@@ -14,6 +14,7 @@ A collection of **Lua-based plugins** designed to enhance gameplay on Aardwolf M
 | Plugin | Type | Description |
 | :--- | :--- | :--- |
 | [**SmartMove**](./SmartMove) | 🏃‍♂️ **Movement** | Context-aware movement. Automatically handles **Sleeping/Resting** (auto-stand) and intelligent combat **Retreat** logic based on class/level. |
+| [**GQ Dashboard**](./gq_dashboard) | 🏆 **Utility** | Resizable Global Quest dashboard with tier filters, competition snapshots, cycle progress, and upcoming range visibility. |
 | [**StatTracker**](./stats_tracker) | 📊 **Utility** | Comprehensive session tracking. Monitors **XP/hr** (with visual widget), Gold, QP, Trains, and tracks "Bloot" (Bonus Loot) drops. |
 | [**Portal Usage Tracker**](./portal_tracker) | 🚪 **Utility** | Tracks portal usage statistics by detecting **equip → WHOOSH** travel and direct `home` commands. Provides persistent stats with table and one-line chat reports. |
 
@@ -25,9 +26,12 @@ A collection of **Lua-based plugins** designed to enhance gameplay on Aardwolf M
 ## 🚀 General Installation
 
 1.  Navigate to the folder of the plugin you want to use (links above).
-2.  Download the `.xml` file (e.g., `SmartMove.xml`).
-    *   *Tip: Click the file, then click the "Download raw file" button.*
-3.  Move the file into your MUSHclient **`worlds/plugins`** directory.
+2.  Download the files listed by that plugin's installation instructions.
+    *   Most plugins use one `.xml` file. **GQ Dashboard requires both
+        `GQ_Dashboard.xml` and `GQ_Dashboard.lua`.**
+    *   *Tip: Click each file, then click the "Download raw file" button.*
+3.  Keep the required files together in your MUSHclient
+    **`worlds/plugins`** directory or one of its subdirectories.
 4.  In MUSHclient:
     *   Press **Ctrl+Shift+P** (or go to **File** → **Plugins**).
     *   Click **Add**.

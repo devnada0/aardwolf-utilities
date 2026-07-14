@@ -1,0 +1,64 @@
+From    To       Less Than  25 to      200 or
+Level   Level    25 Wins    199 Wins   More Wins
+------- -------  ---------  ---------  ---------
+      1       4         No         No        Yes
+      1       8         No         No         No
+      1      12         No        Yes         No
+      5      16         No         No         No
+      9      20         No         No         No
+------------------------------------------------
+     13      24         No         No         No
+     17      28         No         No        Yes
+     21      32        Yes         No        Yes
+     25      36         No         No        Yes
+     29      40         No         No        Yes
+------------------------------------------------
+     33      44         No        Yes         No
+     37      48        Yes         No         No
+     41      52         No         No        Yes
+     45      56         No        Yes         No
+     49      60         No         No         No
+------------------------------------------------
+     53      64         No         No         No
+     57      68         No         No         No
+     61      72         No        Yes        Yes
+     65      76         No         No         No
+     69      80         No         No        Yes
+------------------------------------------------
+     73      84         No         No         No
+     77      88         No         No         No
+     81      92         No         No         No
+     85      96         No         No         No
+     89     100         No         No        Yes
+------------------------------------------------
+     93     104         No         No         No
+     97     108         No         No         No
+    101     112         No         No         No
+    105     116         No         No         No
+    109     120         No        Yes        Yes
+------------------------------------------------
+    113     125         No         No        Yes
+    117     130         No         No         No
+    121     135        Yes         No         No
+    126     140         No        Yes         No
+    131     145         No        Yes         No
+------------------------------------------------
+    136     150         No         No        Yes
+    141     155        Yes        Yes        Yes
+    146     160         No         No        Yes
+    151     165         No        Yes         No
+    156     170         No         No         No
+------------------------------------------------
+    161     175         No        Yes        Yes
+    166     180         No         No         No
+    171     185         No         No         No
+    176     190         No         No         No
+    181     193         No         No         No
+------------------------------------------------
+    186     201         No         No        Yes
+    191     199         No        Yes         No
+    191     199        Yes         No         No
+    200     201         No         No         No
+    201     201         No        Yes         No
+                 ---------  ---------  ---------
+Cycle Complete:     10.00%     24.00%     32.00%
