@@ -1,0 +1,304 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE muclient>
+<muclient>
+  <plugin
+    name="GQ_Dashboard"
+    author="Morienda"
+    id="300566e7f39f483cb01a2d6e"
+    language="Lua"
+    purpose="Miniwindow: Active Global Quests, competition snapshots, and cycle ranges"
+    date_written="2026-07-14"
+    requires="4.59"
+    version="3.0"
+    save_state="y"
+  />
+
+  <!-- Aliases -->
+  <aliases>
+    <alias match="gqshow"  enabled="y" regexp="n" send_to="12" script="window_show" />
+    <alias match="gqhide"  enabled="y" regexp="n" send_to="12" script="window_hide" />
+    <alias match="gqlist"  enabled="y" regexp="n" send_to="12" script="gq_list" />
+    <alias match="gqdebug" enabled="y" regexp="n" send_to="12" script="debug_gq" />
+  </aliases>
+
+  <!-- Routine GQ-list capture stays single-command and commits atomically. -->
+  <triggers>
+    <trigger
+      enabled="y"
+      match="^Num\s+Type\s+From\s+To\s+Status\s+Timer\s+Players\s*$"
+      regexp="y"
+      sequence="100"
+      send_to="12"
+      script="gq_capture_start"
+      name="GQ_header"
+      omit_from_output="y"
+      omit_from_log="y" />
+
+    <trigger
+      enabled="n"
+      group="GQ_CAPTURE"
+      match="^\s*-+\s+-+\s+-+\s+-+\s+-+\s+-+\s+-+\s*$"
+      regexp="y"
+      sequence="101"
+      send_to="12"
+      script="gq_capture_line"
+      name="GQ_separator"
+      omit_from_output="y"
+      omit_from_log="y" />
+
+    <trigger
+      enabled="n"
+      group="GQ_CAPTURE"
+      match="^\s*\d+\s+(?i:less\s+than\s+25\s+wins|25\s+to\s+199\s+wins|200\s+wins\s+or\s+more)\s+\d+\s+\d+\s+.+?\s+\d+\s+\d+(?:\s+\*\*\*)?\s*$"
+      regexp="y"
+      sequence="102"
+      send_to="12"
+      script="gq_capture_line"
+      name="GQ_line"
+      omit_from_output="y"
+      omit_from_log="y" />
+
+    <!-- A digit-leading line that no longer parses is left visible and makes
+         the staged list fail closed instead of publishing an undercount. -->
+    <trigger
+      enabled="n"
+      group="GQ_CAPTURE"
+      match="^\s*\d+\s+.*$"
+      regexp="y"
+      sequence="103"
+      send_to="12"
+      script="gq_capture_invalid_line"
+      name="GQ_invalid_line" />
+
+    <trigger
+      enabled="n"
+      group="GQ_CAPTURE"
+      match="^\s*$"
+      regexp="y"
+      sequence="104"
+      send_to="12"
+      script="gq_capture_end"
+      name="GQ_stopper"
+      omit_from_output="y"
+      omit_from_log="y" />
+
+    <!-- Ordered server echo fences make automatic captures unambiguous. -->
+    <trigger
+      enabled="y"
+      match="^(?:.* echo&gt; )?GQDASH_SWHO_BEGIN_(\d+)_(\d+)_(\d+)$"
+      regexp="y"
+      sequence="108"
+      send_to="12"
+      script="swho_marker_start"
+      name="GQ_swho_marker_start"
+      omit_from_output="y"
+      omit_from_log="y" />
+
+    <trigger
+      enabled="y"
+      match="^(?:.* echo&gt; )?GQDASH_SWHO_END_(\d+)_(\d+)_(\d+)$"
+      regexp="y"
+      sequence="108"
+      send_to="12"
+      script="swho_marker_end"
+      name="GQ_swho_marker_end"
+      omit_from_output="y"
+      omit_from_log="y" />
+
+    <trigger
+      enabled="y"
+      match="^(?:.* echo&gt; )?GQDASH_RANGES_BEGIN_(\d+)_(\d+)_(\d+)$"
+      regexp="y"
+      sequence="108"
+      send_to="12"
+      script="ranges_marker_start"
+      name="GQ_ranges_marker_start"
+      omit_from_output="y"
+      omit_from_log="y" />
+
+    <trigger
+      enabled="y"
+      match="^(?:.* echo&gt; )?GQDASH_RANGES_END_(\d+)_(\d+)_(\d+)$"
+      regexp="y"
+      sequence="108"
+      send_to="12"
+      script="ranges_marker_end"
+      name="GQ_ranges_marker_end"
+      omit_from_output="y"
+      omit_from_log="y" />
+
+    <!-- Immortal 'echo self' also returns a confirmation line. -->
+    <trigger
+      enabled="y"
+      match="^You echo GQDASH_(?:SWHO|RANGES)_(?:BEGIN|END)_\d+_\d+_\d+ to .+\.$"
+      regexp="y"
+      sequence="107"
+      name="GQ_internal_immortal_echo_confirmation"
+      omit_from_output="y"
+      omit_from_log="y" />
+
+    <!-- The 50-row cycle table is captured only inside its owned fence. -->
+    <trigger
+      enabled="n"
+      group="GQ_RANGES_CAPTURE"
+      match="^\s*From\s+To\s+Less\s+Than\s+25\s+to\s+200\s+or\s*$"
+      regexp="y"
+      sequence="1000"
+      send_to="12"
+      script="ranges_capture_line"
+      name="GQ_ranges_header_one"
+      omit_from_output="y"
+      omit_from_log="y" />
+
+    <trigger
+      enabled="n"
+      group="GQ_RANGES_CAPTURE"
+      match="^\s*Level\s+Level\s+25\s+Wins\s+199\s+Wins\s+More\s+Wins\s*$"
+      regexp="y"
+      sequence="1001"
+      send_to="12"
+      script="ranges_capture_line"
+      name="GQ_ranges_header_two"
+      omit_from_output="y"
+      omit_from_log="y" />
+
+    <trigger
+      enabled="n"
+      group="GQ_RANGES_CAPTURE"
+      match="^\s*-+\s+-+\s+-+\s+-+\s+-+\s*$"
+      regexp="y"
+      sequence="1002"
+      send_to="12"
+      script="ranges_capture_line"
+      name="GQ_ranges_top_separator"
+      omit_from_output="y"
+      omit_from_log="y" />
+
+    <trigger
+      enabled="n"
+      group="GQ_RANGES_CAPTURE"
+      match="^\s*-+\s*$"
+      regexp="y"
+      sequence="1003"
+      send_to="12"
+      script="ranges_capture_line"
+      name="GQ_ranges_group_separator"
+      omit_from_output="y"
+      omit_from_log="y" />
+
+    <trigger
+      enabled="n"
+      group="GQ_RANGES_CAPTURE"
+      match="^\s*\d+\s+\d+\s+(?:Yes|No)\s+(?:Yes|No)\s+(?:Yes|No)\s*$"
+      regexp="y"
+      sequence="1004"
+      send_to="12"
+      script="ranges_capture_line"
+      name="GQ_ranges_row"
+      omit_from_output="y"
+      omit_from_log="y" />
+
+    <trigger
+      enabled="n"
+      group="GQ_RANGES_CAPTURE"
+      match="^\s*-+\s+-+\s+-+\s*$"
+      regexp="y"
+      sequence="1005"
+      send_to="12"
+      script="ranges_capture_line"
+      name="GQ_ranges_footer_separator"
+      omit_from_output="y"
+      omit_from_log="y" />
+
+    <trigger
+      enabled="n"
+      group="GQ_RANGES_CAPTURE"
+      match="^\s*Cycle\s+Complete:\s+(?:100\.00|\d{1,2}\.\d{2})%\s+(?:100\.00|\d{1,2}\.\d{2})%\s+(?:100\.00|\d{1,2}\.\d{2})%\s*$"
+      regexp="y"
+      sequence="1006"
+      send_to="12"
+      script="ranges_capture_line"
+      name="GQ_ranges_footer"
+      omit_from_output="y"
+      omit_from_log="y" />
+
+    <!-- Only recognized automatic response lines are private inside markers;
+         unrelated interleaved output remains visible. -->
+    <trigger
+      enabled="n"
+      group="GQ_SWHO_HEADER"
+      match="^\s*Who list sorted by\s*:\s*Gquests Won\s*$"
+      regexp="y"
+      sequence="1000"
+      send_to="12"
+      script="swho_capture_line"
+      name="GQ_swho_body_header"
+      omit_from_output="y"
+      omit_from_log="y" />
+
+    <trigger
+      enabled="n"
+      group="GQ_SWHO_HEADER"
+      match="^Players found:.*$"
+      regexp="y"
+      sequence="1001"
+      send_to="12"
+      script="swho_capture_line"
+      name="GQ_swho_header_found"
+      omit_from_output="y"
+      omit_from_log="y" />
+
+    <trigger
+      enabled="n"
+      group="GQ_SWHO_HEADER"
+      match="^Players invis:.*$"
+      regexp="y"
+      sequence="1002"
+      send_to="12"
+      script="swho_capture_line"
+      name="GQ_swho_header_footer"
+      omit_from_output="y"
+      omit_from_log="y" />
+
+    <trigger
+      enabled="n"
+      group="GQ_SWHO_BODY"
+      match="^\s*\[[^\]]+\]\s+\[\s*[\d,]+\s*\]\s+.+$"
+      regexp="y"
+      sequence="1001"
+      send_to="12"
+      script="swho_capture_line"
+      name="GQ_swho_body_player"
+      omit_from_output="y"
+      omit_from_log="y" />
+
+    <trigger
+      enabled="n"
+      group="GQ_SWHO_BODY"
+      match="^Players found:.*$"
+      regexp="y"
+      sequence="1002"
+      send_to="12"
+      script="swho_capture_line"
+      name="GQ_swho_body_found"
+      omit_from_output="y"
+      omit_from_log="y" />
+
+    <trigger
+      enabled="n"
+      group="GQ_SWHO_BODY"
+      match="^Players invis:.*$"
+      regexp="y"
+      sequence="1003"
+      send_to="12"
+      script="swho_capture_line"
+      name="GQ_swho_body_footer"
+      omit_from_output="y"
+      omit_from_log="y" />
+
+  </triggers>
+
+  <script><![CDATA[
+dofile(GetPluginInfo(GetPluginID(), 20) .. "GQ_Dashboard.lua")
+  ]]></script>
+</muclient>

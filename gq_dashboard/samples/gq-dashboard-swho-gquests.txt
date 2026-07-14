@@ -1,0 +1,22 @@
+Plugin: gq_dashboard
+Behavior: Count visible players in a GQ level range by Gquests Won tier
+Date observed: 2026-07-11
+Command before output: swho 11 30 49
+Notes: Player names were replaced; spacing and bracket structure were retained.
+---
+
+                       Who list sorted by : Gquests Won
+
+[ 46  Cent   P+6] [    4500 ] (OPK) Playerone
+[ 37  Vamp   W+7] [     296 ] Playertwo
+[ 47  Eldar  P+5] [     180 ] (OPK) Playerthree
+[ 41  Tigran W+3] [     153 ] (OPK) Playerfour
+[ 31  Wraith Psi] [      58 ] (OPK) Playerfive
+[ 40  Wolf   P+4] [      49 ] Playersix
+[ 48  Troll  W+6] [      13 ] *AFK* Playerseven
+[ 49  Troll  W+4] [       2 ] [Advisor] Playereight
+[ 41  Giant  Pal] [       0 ] Playernine
+[ 46  Tigran Thi] [       0 ] Playerten
+
+Players found: [10], Max this reboot: [238], Connections this reboot: [2749]
+Players invis: [0], Max on ever: [853]
