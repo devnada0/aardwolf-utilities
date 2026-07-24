@@ -15,7 +15,7 @@ A collection of **Lua-based plugins** designed to enhance gameplay on Aardwolf M
 | :--- | :--- | :--- |
 | [**SmartMove**](./SmartMove) | 🏃‍♂️ **Movement** | Context-aware movement. Automatically handles **Sleeping/Resting** (auto-stand) and intelligent combat **Retreat** logic based on class/level. |
 | [**GQ Dashboard**](./gq_dashboard) | 🏆 **Utility** | Resizable Global Quest dashboard with tier filters, competition snapshots, cycle progress, and upcoming range visibility. |
-| [**StatTracker**](./stats_tracker) | 📊 **Utility** | Comprehensive session tracking. Monitors **XP/hr** (with visual widget), Gold, QP, Trains, and tracks "Bloot" (Bonus Loot) drops. |
+| [**StatTracker**](./stats_tracker) | 📊 **Utility** | Session tracking utility. Monitors **XP/hr** (with visual widget), Gold, QP, Trains, and tracks "Bloot" (Bonus Loot) drops. |
 | [**Portal Usage Tracker**](./portal_tracker) | 🚪 **Utility** | Tracks portal usage statistics by detecting **equip → WHOOSH** travel and direct `home` commands. Provides persistent stats with table and one-line chat reports. |
 
 
