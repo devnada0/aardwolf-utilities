@@ -5,7 +5,7 @@
 ![Platform](https://img.shields.io/badge/platform-MUSHclient-orange)
 ![Game](https://img.shields.io/badge/game-Aardwolf-red)
 
-**StatTracker** is a comprehensive session monitor for Aardwolf MUD. It combines GMCP data and text triggers to track your economy, progression, and combat efficiency in real-time.
+**StatTracker** is a stat tracker for Aardwolf. It combines GMCP data and text triggers to track your economy, progression, and combat efficiency in real-time.
 
 ---
 
